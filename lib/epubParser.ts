@@ -3,8 +3,20 @@ import JSZip from 'jszip';
 export async function parseEpubMetadata(file: File) {
 	try {
 		const arrayBuffer = await file.arrayBuffer();
+
+		// Validación de seguridad: verificar que el archivo no esté vacío y tenga un tamaño mínimo
+		if (!arrayBuffer || arrayBuffer.byteLength < 100) {
+			throw new Error('El archivo está vacío o no es un EPUB válido.');
+		}
+
 		const zip = new JSZip();
-		const zipContent = await zip.loadAsync(arrayBuffer);
+
+		let zipContent;
+		try {
+			zipContent = await zip.loadAsync(arrayBuffer);
+		} catch (zipError) {
+			throw new Error('El archivo descargado no es un archivo .epub válido o está corrupto.');
+		}
 
 		let extractedTitle = file.name.replace(/\.[^/.]+$/, '');
 		let extractedAuthor = 'Desconocido';
@@ -146,7 +158,6 @@ export async function parseEpubMetadata(file: File) {
 					const lines = cleanText.split('\n');
 					let startIndex = 0;
 
-					// Bucle inteligente para saltar todas las líneas iniciales que formen parte de la cabecera de AO3
 					for (let i = 0; i < lines.length; i++) {
 						const lower = lines[i].trim().toLowerCase();
 						const isHeaderLine =
@@ -176,13 +187,11 @@ export async function parseEpubMetadata(file: File) {
 							lower === extractedAuthor.toLowerCase();
 
 						if (!isHeaderLine && lines[i].trim().length > 3) {
-							// Encontramos el punto donde empieza la historia real
 							startIndex = i;
 							break;
 						}
 					}
 
-					// Cortamos todo el contenido basura anterior
 					const finalLines = lines.slice(startIndex);
 					cleanText = finalLines
 						.join('\n')
@@ -251,21 +260,6 @@ export async function parseEpubMetadata(file: File) {
 		};
 	} catch (e) {
 		console.error('Error parsing epub:', e);
-		return {
-			title: file.name.replace(/\.[^/.]+$/, ''),
-			author: 'Desconocido',
-			rating: 'Not Rated',
-			archiveWarnings: ['Creator Chose Not To Use Archive Warnings'],
-			category: ['Gen'],
-			fandom: 'General Fandom',
-			relationships: [],
-			characters: [],
-			tags: ['General'],
-			summary: 'No summary available.',
-			notes: '',
-			wordCount: 5000,
-			chapters: [{ title: 'Chapter 1', content: 'Error loading file.' }],
-			fullTextContent: 'Error loading file content.',
-		};
+		throw e; // Lanza el error controlado para que la interfaz muestre el aviso correspondiente
 	}
 }

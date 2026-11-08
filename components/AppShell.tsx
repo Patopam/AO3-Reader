@@ -14,7 +14,7 @@ export default function AppShell() {
 
 	const showNotification = (msg: string) => {
 		setNotification(msg);
-		setTimeout(() => setNotification(null), 4000);
+		setTimeout(() => setNotification(null), 5000);
 	};
 
 	const handleSaveFic = async (parsedData: any, file: File) => {
@@ -25,8 +25,7 @@ export default function AppShell() {
 			.first();
 
 		if (existingFic) {
-			showNotification(`⚠️ Este fanfic ("${parsedData.title}") ya está en tu biblioteca.`);
-			return false;
+			return false; // Ya existe, omitimos duplicado
 		}
 
 		await db.fics.add({
@@ -51,25 +50,67 @@ export default function AppShell() {
 			isFavorite: false,
 		});
 
-		showNotification(`✓ ¡Fanfic "${parsedData.title}" subido y guardado con éxito!`);
-		setRefreshKey((prev) => prev + 1);
 		return true;
 	};
 
-	// Usamos nuestra propia API interna de Next.js para evitar bloqueos CORS
 	const handleUploadUrl = async (url: string) => {
 		try {
+			showNotification('⏳ Conectando con Google Drive...');
 			const response = await fetch(`/api/fetch-epub?url=${encodeURIComponent(url)}`);
-			if (!response.ok) throw new Error('No se pudo descargar el archivo mediante el enlace.');
+			const data: any = await response.json(); // <--- Tipado explícito como any para evitar el error
 
+			if (!response.ok) {
+				throw new Error(data.error || 'No se pudo procesar el enlace.');
+			}
+
+			// Si la respuesta contiene múltiples archivos (es una carpeta)
+			if (data.files && Array.isArray(data.files)) {
+				let importedCount = 0;
+				let duplicateCount = 0;
+
+				showNotification(`⏳ Procesando carpeta con ${data.files.length} archivo(s)...`);
+
+				for (const f of data.files) {
+					try {
+						// Convertir base64 a Buffer/File de nuevo
+						const binaryString = atob(f.data);
+						const len = binaryString.length;
+						const bytes = new Uint8Array(len);
+						for (let i = 0; i < len; i++) {
+							bytes[i] = binaryString.charCodeAt(i);
+						}
+						const blob = new Blob([bytes], { type: 'application/epub+zip' });
+						const file = new File([blob], f.name, { type: 'application/epub+zip' });
+
+						const parsedData = await parseEpubMetadata(file);
+						const success = await handleSaveFic(parsedData, file);
+						if (success) importedCount++;
+						else duplicateCount++;
+					} catch (err) {
+						console.error(`Error procesando ${f.name}:`, err);
+					}
+				}
+
+				setRefreshKey((prev) => prev + 1);
+				showNotification(`✓ Carpeta importada: ${importedCount} nuevos (${duplicateCount} duplicados omitidos).`);
+				return;
+			}
+
+			// Si es un archivo individual normal
 			const blob = await response.blob();
 			const file = new File([blob], 'imported-fic.epub', { type: 'application/epub+zip' });
-
 			const parsedData = await parseEpubMetadata(file);
-			await handleSaveFic(parsedData, file);
-		} catch (error) {
+			const success = await handleSaveFic(parsedData, file);
+
+			if (success) {
+				showNotification(`✓ ¡Fanfic "${parsedData.title}" importado con éxito!`);
+				setRefreshKey((prev) => prev + 1);
+			} else {
+				showNotification(`⚠️ El fanfic ya estaba en tu biblioteca.`);
+			}
+		} catch (error: any) {
 			console.error('Error al importar:', error);
-			showNotification('❌ Error al descargar. Asegúrate de que el enlace sea público.');
+			showNotification(`❌ Error: ${error.message || 'Enlace no válido o carpeta privada.'}`);
 		}
 	};
 
@@ -97,11 +138,12 @@ export default function AppShell() {
 				)}
 			</main>
 
+			{/* Modal de subida masiva (Múltiples EPUBs o Carpetas) */}
 			{isUploadOpen && (
 				<div className='fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4'>
 					<div className='bg-white p-6 rounded-lg max-w-md w-full shadow-xl border border-gray-200 space-y-4'>
 						<div className='flex justify-between items-center border-b pb-3'>
-							<h3 className='font-bold text-sm text-[#990000]'>Upload Fanfic (.epub)</h3>
+							<h3 className='font-bold text-sm text-[#990000]'>Upload Fanfics or Folder (.epub)</h3>
 							<button
 								onClick={() => setIsUploadOpen(false)}
 								className='text-gray-400 hover:text-gray-600 font-bold text-sm'
@@ -110,19 +152,52 @@ export default function AppShell() {
 							</button>
 						</div>
 
-						<div className='py-4'>
+						<div className='py-4 space-y-3'>
+							<p className='text-xs text-gray-600'>
+								Puedes seleccionar múltiples archivos EPUB a la vez o una carpeta entera.
+							</p>
 							<input
 								type='file'
 								accept='.epub'
+								multiple
+								// @ts-ignore
+								webkitdirectory=''
+								directory=''
 								onChange={async (e: any) => {
-									const file = e.target.files?.[0];
-									if (file) {
-										const parsedData = await parseEpubMetadata(file);
-										const success = await handleSaveFic(parsedData, file);
-										if (success) {
-											setIsUploadOpen(false);
+									const targetFiles = e.target.files;
+									if (!targetFiles || targetFiles.length === 0) return;
+
+									let importedCount = 0;
+									let duplicateCount = 0;
+									let errorCount = 0;
+
+									showNotification(`⏳ Procesando archivos de la carpeta...`);
+
+									for (let i = 0; i < targetFiles.length; i++) {
+										const file = targetFiles[i];
+
+										// Verificación estricta: debe terminar en .epub y tener tamaño real
+										if (file && file.name && file.name.toLowerCase().endsWith('.epub') && file.size > 100) {
+											try {
+												const parsedData = await parseEpubMetadata(file);
+												const success = await handleSaveFic(parsedData, file);
+												if (success) {
+													importedCount++;
+												} else {
+													duplicateCount++;
+												}
+											} catch (err) {
+												console.warn(`Omitido (archivo no válido o corrupto): ${file.name}`);
+												errorCount++;
+											}
 										}
 									}
+
+									setIsUploadOpen(false);
+									setRefreshKey((prev) => prev + 1);
+									showNotification(
+										`✓ Importados: ${importedCount} nuevos | Duplicados: ${duplicateCount} | Omitidos: ${errorCount}`,
+									);
 								}}
 								className='w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-red-50 file:text-[#990000] hover:file:bg-red-100 cursor-pointer'
 							/>
