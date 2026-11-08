@@ -9,6 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "dexie": "^4.4.7",
+    "dexie-react-hooks": "^4.4.0",
+    "epubjs": "^0.3.93",
+    "jszip": "^3.10.2",
     "next": "16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0"
