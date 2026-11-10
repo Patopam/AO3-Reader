@@ -1,0 +1,8 @@
+{
+  "name": "AO3 Reader",
+  "description": "An Archive of Our Own (AO3) EPUB reader and library manager with tags, filters, and customizable reading display.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const API_KEY = 'AIzaSyAJRzJqsycSev2cFsC3cDFzFLNkYI9MfCA';
+const API_KEY = process.env.GOOGLE_DRIVE_API_KEY || 'AIzaSyAJRzJqsycSev2cFsC3cDFzFLNkYI9MfCA';
 
 export async function GET(request: Request) {
 	const { searchParams } = new URL(request.url);

@@ -9,7 +9,7 @@ declare global {
 	}
 }
 
-const API_KEY = 'AIzaSyAJRzJqsycSev2cFsC3cDFzFLNkYI9MfCA';
+const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_DRIVE_API_KEY || 'AIzaSyAJRzJqsycSev2cFsC3cDFzFLNkYI9MfCA';
 
 function extractDriveId(url: string): { id: string; type: 'file' | 'folder' } | null {
 	try {
