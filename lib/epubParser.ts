@@ -9,43 +9,168 @@ export function escapeRegex(str: string): string {
 }
 
 /**
- * Extracts plain text from an HTML element, preserving paragraph breaks
- * and linebreaks, with automatic HTML entity decoding via DOMParser.
- * Does NOT force italic styling.
+ * Safely escapes HTML special characters in plain text strings.
  */
-function extractStructuredPlainText(element: Element | null): string {
-	if (!element) return '';
+function escapeHtml(str: string): string {
+	return str
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
 
-	const clone = element.cloneNode(true) as HTMLElement;
+/**
+ * Cleans and sanitizes a paragraph element's inner HTML:
+ * - Strips all inline styles (preventing inherited font-style: italic, font-size, etc.)
+ * - Strips all classes and IDs
+ * - Preserves intentional inline formatting: <em>, <i>, <strong>, <b>, <br>, <code>, <span>, <a>
+ * - Normalizes spacing and returns sanitized HTML or null if empty
+ */
+function sanitizeParagraphInnerHtml(p: HTMLElement): string | null {
+	const clone = p.cloneNode(true) as HTMLElement;
 
-	// Remove scripts, styles
-	clone.querySelectorAll('script, style').forEach((el) => el.remove());
+	// Remove all scripts, styles, images, iframes
+	clone.querySelectorAll('script, style, link, meta, img, iframe, input, button, form').forEach((el) => el.remove());
 
-	// Replace <br> with single newline and <hr> with double
-	clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
-	clone.querySelectorAll('hr').forEach((hr) => hr.replaceWith('\n\n'));
+	// Strip all attributes from all elements
+	const allElements = clone.querySelectorAll('*');
+	allElements.forEach((el) => {
+		const tagName = el.tagName.toLowerCase();
+		// Allow safe inline tags: em, i, strong, b, br, code, span, a, sub, sup, del, s
+		const safeTags = ['em', 'i', 'strong', 'b', 'br', 'code', 'span', 'a', 'sub', 'sup', 'del', 's'];
+		if (!safeTags.includes(tagName)) {
+			// Replace element with its text content
+			const doc = el.ownerDocument || (typeof document !== 'undefined' ? document : null);
+			if (doc) {
+				const textNode = doc.createTextNode(el.textContent || '');
+				el.parentNode?.replaceChild(textNode, el);
+			}
+		} else {
+			// Remove all attributes except href for links
+			const href = tagName === 'a' ? el.getAttribute('href') : null;
+			while (el.attributes.length > 0) {
+				el.removeAttribute(el.attributes[0].name);
+			}
+			if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+				el.setAttribute('href', href);
+				el.setAttribute('target', '_blank');
+				el.setAttribute('rel', 'noopener noreferrer');
+			}
+		}
+	});
 
-	// Find all paragraphs or block elements
-	const blocks = clone.querySelectorAll('p, div, blockquote, dd, li, h1, h2, h3, h4, h5, h6');
-	if (blocks.length > 0) {
-		const parts: string[] = [];
-		const pTags = clone.querySelectorAll('p');
-		if (pTags.length > 0) {
-			pTags.forEach((p) => {
-				const text = p.textContent?.trim();
-				if (text) parts.push(text);
-			});
-			if (parts.length > 0) {
-				return parts.join('\n\n');
+	let inner = clone.innerHTML.trim();
+	// Normalize multiple whitespace
+	inner = inner.replace(/[ \t]+/g, ' ');
+
+	// Check if paragraph is effectively empty
+	const textContent = (clone.textContent || '').replace(/\u00a0/g, ' ').trim();
+	if (!textContent && !inner.includes('<img')) {
+		return null;
+	}
+
+	return inner;
+}
+
+/**
+ * Cleans and formats an AO3 or EPUB summary:
+ * - Decodes HTML entities properly
+ * - Preserves paragraph breaks (<p>)
+ * - Preserves intentional line breaks (<br>)
+ * - Preserves intentional bold (<strong>, <b>) and italic (<em>, <i>)
+ * - Removes unnecessary wrapper tags (blockquote, div.userstuff, heading tags)
+ * - Returns clean HTML string (<p>...</p>) or null if no valid summary exists
+ */
+export function cleanAndFormatSummary(raw: string | null | undefined): string | null {
+	if (!raw) return null;
+	let trimmed = raw.trim();
+	if (!trimmed) return null;
+
+	const domParser = new DOMParser();
+
+	// Step 1: Detect and decode HTML-escaped markup (e.g. &lt;p&gt;...&lt;/p&gt; from OPF dc:description)
+	if (trimmed.includes('&lt;') && trimmed.includes('&gt;')) {
+		const tempDoc = domParser.parseFromString(trimmed, 'text/html');
+		const decoded = tempDoc.body.textContent || '';
+		if (decoded.includes('<') && decoded.includes('>')) {
+			trimmed = decoded.trim();
+		}
+	}
+
+	// Step 2: Parse as HTML Document
+	const doc = domParser.parseFromString(trimmed, 'text/html');
+	const body = doc.body;
+
+	// Remove unwanted elements
+	body.querySelectorAll('script, style, link, meta, form, input, button, iframe, noscript').forEach((el) =>
+		el.remove()
+	);
+
+	// Remove redundant summary or notes headings if present
+	body.querySelectorAll('h1, h2, h3, h4, h5, h6, .heading, .title').forEach((h) => {
+		const headingText = (h.textContent || '').trim().toLowerCase();
+		if (
+			headingText === 'summary' ||
+			headingText === 'summary:' ||
+			headingText === 'resumen' ||
+			headingText === 'resumen:' ||
+			headingText === 'notes' ||
+			headingText === 'notas'
+		) {
+			h.remove();
+		}
+	});
+
+	// If the summary is nested inside a container like .userstuff, .summary, blockquote, focus on it
+	const contentRoot =
+		body.querySelector('blockquote.userstuff, div.userstuff, div.summary blockquote, div.summary, blockquote') ||
+		body;
+
+	const cleanedParagraphs: string[] = [];
+
+	// Step 3: Extract paragraphs
+	const pElements = contentRoot.querySelectorAll('p');
+	if (pElements.length > 0) {
+		pElements.forEach((p) => {
+			const sanitizedInner = sanitizeParagraphInnerHtml(p as HTMLElement);
+			if (sanitizedInner) {
+				cleanedParagraphs.push(`<p>${sanitizedInner}</p>`);
+			}
+		});
+	}
+
+	// Step 4: If no <p> tags were found, split by double newlines or breaks
+	if (cleanedParagraphs.length === 0) {
+		const clone = contentRoot.cloneNode(true) as HTMLElement;
+		clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+		clone.querySelectorAll('hr').forEach((hr) => hr.replaceWith('\n\n'));
+
+		const rawText = clone.textContent || '';
+		const lines = rawText
+			.replace(/\r\n/g, '\n')
+			.split(/\n\n+/)
+			.map((l) => l.trim())
+			.filter(Boolean);
+
+		for (const line of lines) {
+			if (line.length > 0) {
+				cleanedParagraphs.push(`<p>${escapeHtml(line)}</p>`);
 			}
 		}
 	}
 
-	const raw = clone.textContent || '';
-	return raw
-		.replace(/\r\n/g, '\n')
-		.replace(/\n{3,}/g, '\n\n')
-		.trim();
+	if (cleanedParagraphs.length === 0) {
+		return null;
+	}
+
+	// Verify total text content is non-trivial (prevent accidental single dots or placeholders)
+	const combinedText = cleanedParagraphs.join(' ').replace(/<[^>]+>/g, '').trim();
+	if (combinedText.length < 3) {
+		return null;
+	}
+
+	return cleanedParagraphs.join('\n');
 }
 
 /**
@@ -65,7 +190,7 @@ function cleanChapterHtml(htmlDoc: Document): { title: string; html: string; tex
 
 	// Determine chapter title
 	let chapterTitle = '';
-	const titleElement = htmlDoc.querySelector('h2.title, h2, h1, .chapter-title, .title');
+	const titleElement = htmlDoc.querySelector('h2.title, h2.heading, h2, h1, .chapter-title, .title');
 	if (titleElement) {
 		const rawTitle = titleElement.textContent?.trim();
 		if (
@@ -99,13 +224,11 @@ function cleanChapterHtml(htmlDoc: Document): { title: string; html: string; tex
 		pList.forEach((p) => {
 			const text = p.textContent?.trim();
 			if (text) {
-				// Clean inner HTML: keep <em>, <strong>, <i>, <b>, <span>, <a>
-				const inner = p.innerHTML
-					.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-					.replace(/style="[^"]*"/gi, '')
-					.trim();
-				htmlParagraphs.push(`<p class="mb-4 leading-relaxed">${inner}</p>`);
-				textParagraphs.push(text);
+				const sanitizedInner = sanitizeParagraphInnerHtml(p as HTMLElement);
+				if (sanitizedInner) {
+					htmlParagraphs.push(`<p>${sanitizedInner}</p>`);
+					textParagraphs.push(text);
+				}
 			}
 		});
 
@@ -113,12 +236,15 @@ function cleanChapterHtml(htmlDoc: Document): { title: string; html: string; tex
 		cleanText = textParagraphs.join('\n\n');
 	} else {
 		// Fallback for files without <p> tags
-		const text = extractStructuredPlainText(clone);
-		cleanText = text;
-		cleanHtml = text
+		const cloneText = clone.textContent || '';
+		const textLines = cloneText
+			.replace(/\r\n/g, '\n')
 			.split(/\n\n+/)
-			.map((para) => `<p class="mb-4 leading-relaxed">${para.trim()}</p>`)
-			.join('\n');
+			.map((s) => s.trim())
+			.filter(Boolean);
+
+		cleanText = textLines.join('\n\n');
+		cleanHtml = textLines.map((para) => `<p>${escapeHtml(para)}</p>`).join('\n');
 	}
 
 	return {
@@ -191,10 +317,13 @@ export async function parseEpubMetadata(
 		opfDoc.querySelector('dc\\:creator')?.textContent?.trim() ||
 		'Unknown Author';
 
-	const opfDescription =
+	// Extract dc:description from OPF metadata
+	const rawOpfDescription =
 		opfDoc.querySelector('description')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:description')?.textContent?.trim() ||
 		null;
+
+	let summary: string | null = cleanAndFormatSummary(rawOpfDescription);
 
 	const language =
 		opfDoc.querySelector('language')?.textContent?.trim() ||
@@ -237,7 +366,6 @@ export async function parseEpubMetadata(
 	const relationships: string[] = [];
 	const characters: string[] = [];
 	const additionalTags: string[] = [...subjectTags];
-	let summary: string | null = opfDescription ? extractStructuredPlainText(domParser.parseFromString(opfDescription, 'text/html').body) : null;
 	let notes: string | null = null;
 	let parsedWordCount: number | null = null;
 	let publicationStatus: 'Completed' | 'Work in Progress' | 'Unknown' | null = null;
@@ -339,20 +467,24 @@ export async function parseEpubMetadata(
 			});
 		}
 
-		// Look for summary block for library card metadata
-		if (!summary || summary.length < 20) {
-			const summaryEl = htmlDoc.querySelector('.summary, #summary, [data-summary], div.summary > blockquote');
+		// Fallback for summary: if not found in OPF, inspect AO3 preface summary block
+		if (!summary) {
+			const summaryEl = htmlDoc.querySelector(
+				'div.summary blockquote.userstuff, div.summary blockquote, .summary .userstuff, div.summary, #summary'
+			);
 			if (summaryEl) {
-				const extracted = extractStructuredPlainText(summaryEl);
+				const extracted = cleanAndFormatSummary(summaryEl.innerHTML || summaryEl.textContent);
 				if (extracted) summary = extracted;
 			}
 		}
 
 		// Look for notes block
 		if (!notes) {
-			const notesEl = htmlDoc.querySelector('.notes, #notes, div.notes > blockquote');
+			const notesEl = htmlDoc.querySelector(
+				'div.notes blockquote.userstuff, div.notes blockquote, .notes .userstuff, div.notes, #notes'
+			);
 			if (notesEl) {
-				const extracted = extractStructuredPlainText(notesEl);
+				const extracted = cleanAndFormatSummary(notesEl.innerHTML || notesEl.textContent);
 				if (extracted) notes = extracted;
 			}
 		}
@@ -369,14 +501,17 @@ export async function parseEpubMetadata(
 
 		if (isPreface && !isCoverOrTitlepage) {
 			// Extract Preface as its own readable section if it contains notes/prologue
-			const prefaceNotesEl = htmlDoc.querySelector('div.preface .notes, div.preface .userstuff, div.preface');
-			if (prefaceNotesEl) {
-				const cloneNotes = prefaceNotesEl.cloneNode(true) as HTMLElement;
-				cloneNotes.querySelectorAll('dl.tags, dl.meta, div.stats, div.summary').forEach((e) => e.remove());
-				const { text, html } = cleanChapterHtml(domParser.parseFromString(cloneNotes.outerHTML, 'text/html'));
-				if (text.length > 40) {
+			const prefaceEl = htmlDoc.querySelector('div.preface, body');
+			if (prefaceEl) {
+				const clonePreface = prefaceEl.cloneNode(true) as HTMLElement;
+				// Remove the metadata tag block and the summary block from the reading content
+				clonePreface
+					.querySelectorAll('dl.tags, dl.meta, div.stats, div.summary, h2.toc-heading')
+					.forEach((e) => e.remove());
+				const { text, html } = cleanChapterHtml(domParser.parseFromString(clonePreface.outerHTML, 'text/html'));
+				if (text.length > 30) {
 					chapters.push({
-						title: 'Preface & Notes',
+						title: 'Prefacio y Notas',
 						content: html || text,
 					});
 					accumulatedStoryText += text + '\n\n';
@@ -385,8 +520,8 @@ export async function parseEpubMetadata(
 		} else if (!isCoverOrTitlepage) {
 			// Extract standard chapter
 			const chapterResult = cleanChapterHtml(htmlDoc);
-			if (chapterResult.text.length > 40) {
-				const chapterTitle = chapterResult.title || `Chapter ${chapters.length + 1}`;
+			if (chapterResult.text.length > 30) {
+				const chapterTitle = chapterResult.title || `Capítulo ${chapters.length + 1}`;
 				chapters.push({
 					title: chapterTitle,
 					content: chapterResult.html || chapterResult.text,
@@ -398,9 +533,9 @@ export async function parseEpubMetadata(
 
 	if (chapters.length === 0) {
 		if (accumulatedStoryText.trim().length > 0) {
-			chapters.push({ title: 'Full Work', content: accumulatedStoryText.trim() });
+			chapters.push({ title: 'Obra Completa', content: accumulatedStoryText.trim() });
 		} else {
-			chapters.push({ title: 'Chapter 1', content: '<p>No se encontró texto legible en este archivo.</p>' });
+			chapters.push({ title: 'Capítulo 1', content: '<p>No se encontró texto legible en este archivo.</p>' });
 		}
 	}
 

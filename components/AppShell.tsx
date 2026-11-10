@@ -27,7 +27,13 @@ export default function AppShell() {
 	};
 
 	if (selectedFic) {
-		return <ReaderView fic={selectedFic} onBack={handleBackToLibrary} />;
+		return (
+			<ReaderView
+				fic={selectedFic}
+				onBack={handleBackToLibrary}
+				onFicUpdated={(updated) => setSelectedFic(updated)}
+			/>
+		);
 	}
 
 	return (

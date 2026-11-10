@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, type Fic } from '../lib/db';
+import { db, type Fic, reprocessAllFicsFromBlobs } from '../lib/db';
 import { BookCard } from './BookCard';
+import { FicDetailsModal } from './FicDetailsModal';
 import {
 	Search,
 	Upload,
@@ -45,6 +46,10 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 	const [searchQuery, setSearchQuery] = useState('');
 	const [quickTab, setQuickTab] = useState<QuickTab>('all');
 	const [sortBy, setSortBy] = useState<SortOption>('dateAddedDesc');
+
+	// Fic details modal state
+	const [detailsFic, setDetailsFic] = useState<Fic | null>(null);
+	const [isReprocessingAll, setIsReprocessingAll] = useState(false);
 
 	// Responsive mobile filter drawer toggle
 	const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
@@ -732,6 +737,31 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 
 				{/* Quick Actions */}
 				<div className='flex items-center space-x-2'>
+					{fics.some((f) => f.format === 'epub' && (f.fileId || (f as any).fileData)) && (
+						<button
+							disabled={isReprocessingAll}
+							onClick={async () => {
+								setIsReprocessingAll(true);
+								try {
+									const res = await reprocessAllFicsFromBlobs();
+									if (res.updated > 0) {
+										await loadFics();
+										alert(`Se han actualizado los resúmenes de ${res.updated} obra(s) desde sus archivos EPUB.`);
+									} else {
+										alert('Todos los resúmenes ya están al día.');
+									}
+								} finally {
+									setIsReprocessingAll(false);
+								}
+							}}
+							title='Re-extraer resúmenes limpios de todos los archivos EPUB almacenados'
+							className='hidden sm:flex items-center space-x-1 px-3 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-md font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50'
+						>
+							<RotateCcw className={`w-3.5 h-3.5 text-gray-500 ${isReprocessingAll ? 'animate-spin' : ''}`} />
+							<span>{isReprocessingAll ? 'Actualizando...' : 'Actualizar resúmenes'}</span>
+						</button>
+					)}
+
 					<button
 						onClick={() => setIsMobileFilterOpen(true)}
 						className='md:hidden px-3 py-2 bg-white border border-gray-300 text-gray-700 rounded-md font-semibold text-xs flex items-center space-x-1.5'
@@ -867,6 +897,7 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 										key={fic.id}
 										fic={fic}
 										onSelect={onSelectFic}
+										onOpenDetails={(f) => setDetailsFic(f)}
 										onTagClick={handleTagClick}
 										onUpdated={loadFics}
 									/>
@@ -944,6 +975,25 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 					</div>
 				</div>
 			)}
+
+			{/* Fic Details Modal */}
+			<FicDetailsModal
+				fic={detailsFic}
+				isOpen={Boolean(detailsFic)}
+				onClose={() => setDetailsFic(null)}
+				onStartReading={(selectedFic, chapterIdx) => {
+					setDetailsFic(null);
+					if (chapterIdx !== undefined && selectedFic.id) {
+						selectedFic.currentChapterIdx = chapterIdx;
+					}
+					onSelectFic(selectedFic);
+				}}
+				onTagClick={handleTagClick}
+				onFicUpdated={(updated) => {
+					setDetailsFic(updated);
+					loadFics();
+				}}
+			/>
 		</div>
 	);
 }

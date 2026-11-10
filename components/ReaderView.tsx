@@ -5,6 +5,7 @@ import type { Fic, FicChapter } from '../lib/db';
 import { db, updateReadingProgress } from '../lib/db';
 import { escapeRegex } from '../lib/epubParser';
 import { PdfReader } from './PdfReader';
+import { FicDetailsModal } from './FicDetailsModal';
 import {
 	ArrowLeft,
 	Heart,
@@ -15,20 +16,22 @@ import {
 	ChevronRight,
 	Sun,
 	Coffee,
-	Moon,
-	SlidersHorizontal,
+	Info,
 } from 'lucide-react';
 
 interface ReaderViewProps {
 	fic: Fic;
 	onBack: () => void;
+	onFicUpdated?: (updated: Fic) => void;
 }
 
 type ReaderTheme = 'default' | 'sepia' | 'dark';
 type ReaderWidth = 'compact' | 'normal' | 'wide' | 'full';
 type ReaderFont = 'serif' | 'sans' | 'mono';
 
-export function ReaderView({ fic, onBack }: ReaderViewProps) {
+export function ReaderView({ fic: initialFic, onBack, onFicUpdated }: ReaderViewProps) {
+	const [fic, setFic] = useState<Fic>(initialFic);
+
 	// If this is a PDF, delegate immediately to the integrated PdfReader
 	if (fic.format === 'pdf') {
 		return (
@@ -41,13 +44,17 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 					if (!fic.id) return;
 					const next = !fic.isFavorite;
 					await db.fics.update(fic.id, { isFavorite: next });
-					fic.isFavorite = next;
+					const updated = { ...fic, isFavorite: next };
+					setFic(updated);
+					if (onFicUpdated) onFicUpdated(updated);
 				}}
 				onToggleRead={async () => {
 					if (!fic.id) return;
 					const next = !fic.isRead;
 					await db.fics.update(fic.id, { isRead: next, readingProgress: next ? 100 : fic.readingProgress });
-					fic.isRead = next;
+					const updated = { ...fic, isRead: next };
+					setFic(updated);
+					if (onFicUpdated) onFicUpdated(updated);
 				}}
 			/>
 		);
@@ -60,13 +67,14 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 	const [isRead, setIsRead] = useState<boolean>(Boolean(fic.isRead));
 	const [isFavorite, setIsFavorite] = useState<boolean>(Boolean(fic.isFavorite));
 	const [showSettings, setShowSettings] = useState<boolean>(false);
+	const [showDetailsModal, setShowDetailsModal] = useState<boolean>(false);
 
 	// Customization settings
 	const [fontSize, setFontSize] = useState<number>(18);
 	const [fontFamily, setFontFamily] = useState<ReaderFont>('serif');
 	const [theme, setTheme] = useState<ReaderTheme>('default');
 	const [contentWidth, setContentWidth] = useState<ReaderWidth>('normal');
-	const [lineHeight] = useState<number>(1.8);
+	const [lineHeight] = useState<number>(1.75);
 
 	const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -84,7 +92,6 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 			const cleanedChapters = rawChapters.map((chap, idx) => {
 				if (idx === 0) {
 					let cleaned = chap.content;
-					// If the first chapter duplicates the title line, clean safely
 					cleaned = cleaned.replace(safeTitleRegex, '').trim();
 					return { ...chap, content: cleaned || chap.content };
 				}
@@ -123,6 +130,9 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 			lastReadAt: Date.now(),
 		});
 		setIsRead(next);
+		const updated = { ...fic, isRead: next, readingProgress: next ? 100 : fic.readingProgress };
+		setFic(updated);
+		if (onFicUpdated) onFicUpdated(updated);
 	};
 
 	const handleToggleFavorite = async () => {
@@ -130,6 +140,9 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 		const next = !isFavorite;
 		await db.fics.update(fic.id, { isFavorite: next });
 		setIsFavorite(next);
+		const updated = { ...fic, isFavorite: next };
+		setFic(updated);
+		if (onFicUpdated) onFicUpdated(updated);
 	};
 
 	// Theme color schemes (All light/comfortable, no dark buttons)
@@ -191,22 +204,21 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 		}
 	};
 
-	const allWarnings = fic.warnings && fic.warnings.length > 0 ? fic.warnings : fic.archiveWarnings || [];
-
 	/**
 	 * Renders chapter text safely:
-	 * Supports rich HTML paragraphs, keeping italics only where specified,
-	 * with normal font style for standard text.
+	 * Supports rich HTML paragraphs, keeping italics ONLY where specified by author (<em>, <i>),
+	 * with normal font style for all base text.
+	 * Resets blockquote italics to prevent inherited global italic bug.
 	 */
 	const renderChapterBody = (content: string) => {
 		if (!content) return null;
 
-		// If content already contains HTML tags like <p>, render HTML
+		// If content already contains HTML tags like <p>, render HTML cleanly
 		if (content.includes('<p>') || content.includes('<div>') || content.includes('<br')) {
 			return (
 				<div
 					style={{ fontSize: `${fontSize}px`, lineHeight }}
-					className='font-normal not-italic text-gray-900 space-y-4 font-serif [&_p]:mb-4 [&_p]:leading-relaxed [&_em]:italic [&_i]:italic [&_strong]:font-bold [&_b]:font-bold [&_blockquote]:border-l-2 [&_blockquote]:border-[#990000] [&_blockquote]:pl-4 [&_blockquote]:my-4'
+					className='font-normal not-italic text-gray-900 font-serif leading-relaxed [&_p]:mb-4 [&_p]:leading-relaxed [&_p]:font-normal [&_p]:not-italic [&_em]:italic [&_i]:italic [&_strong]:font-bold [&_b]:font-bold [&_blockquote]:border-l-3 [&_blockquote]:border-[#990000] [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:not-italic [&_blockquote]:font-normal [&_h1]:font-bold [&_h2]:font-bold [&_h3]:font-bold [&_h4]:font-bold [&_a]:text-[#990000] [&_a]:underline'
 					dangerouslySetInnerHTML={{ __html: content }}
 				/>
 			);
@@ -260,6 +272,16 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 						</button>
 					)}
 
+					{/* View Details Modal Button */}
+					<button
+						onClick={() => setShowDetailsModal(true)}
+						title='Ver detalles y resumen de la obra'
+						className='flex items-center space-x-1 px-2.5 py-1.5 rounded border border-gray-300 bg-white text-gray-700 hover:text-[#990000] hover:bg-gray-50 transition-colors cursor-pointer text-xs font-semibold shadow-xs'
+					>
+						<Info className='w-3.5 h-3.5 text-gray-500' />
+						<span className='hidden md:inline'>Detalles</span>
+					</button>
+
 					{/* Display Settings Toggle */}
 					<button
 						onClick={() => setShowSettings(!showSettings)}
@@ -304,7 +326,7 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 				</div>
 			</header>
 
-			{/* Display Settings Toolbar (Crisp, light, intuitive controls) */}
+			{/* Display Settings Toolbar */}
 			{showSettings && (
 				<div
 					className={`border-b ${themeCls.navBg} px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 text-xs z-10 shadow-inner`}
@@ -451,7 +473,7 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 				</div>
 			)}
 
-			{/* Reader Content Body */}
+			{/* Reader Content Body (Pure book content without injected summary clutter) */}
 			<div ref={scrollContainerRef} className='flex-1 overflow-y-auto p-4 md:p-12'>
 				{loading ? (
 					<div className='flex justify-center items-center h-64 text-gray-500 font-medium'>
@@ -459,102 +481,6 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 					</div>
 				) : (
 					<div className={`${getWidthClass()} mx-auto space-y-8 ${getFontClass()} leading-relaxed`}>
-						{/* Full AO3 Metadata Header */}
-						<div className='border-b border-gray-300 pb-6 mb-8 font-sans text-xs space-y-2 text-gray-800'>
-							{fic.rating && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Clasificación:</span>
-									<span className={`font-semibold ${themeCls.accent}`}>{fic.rating}</span>
-								</div>
-							)}
-
-							{allWarnings.length > 0 && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Advertencias:</span>
-									<span className='font-medium'>{allWarnings.join(', ')}</span>
-								</div>
-							)}
-
-							{fic.category && fic.category.length > 0 && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Categoría:</span>
-									<span>{fic.category.join(', ')}</span>
-								</div>
-							)}
-
-							{fic.fandom && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Fandom:</span>
-									<span className='font-medium text-[#990000]'>{fic.fandom}</span>
-								</div>
-							)}
-
-							{fic.relationships && fic.relationships.length > 0 && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Relaciones:</span>
-									<span>{fic.relationships.join(' · ')}</span>
-								</div>
-							)}
-
-							{fic.characters && fic.characters.length > 0 && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Personajes:</span>
-									<span>{fic.characters.join(' · ')}</span>
-								</div>
-							)}
-
-							{fic.additionalTags && fic.additionalTags.length > 0 && (
-								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold text-gray-900'>Etiquetas:</span>
-									<span>{fic.additionalTags.join(', ')}</span>
-								</div>
-							)}
-
-							<div className='flex flex-wrap justify-between items-center text-gray-500 pt-3 border-t border-gray-200 text-[11px] font-sans mt-4'>
-								<div className='space-x-4'>
-									{fic.language && <span>Idioma: {fic.language}</span>}
-									{fic.wordCount && <span>Palabras: {fic.wordCount.toLocaleString()}</span>}
-								</div>
-								<div>
-									<span>
-										Capítulos: {chapters.length}/{chapters.length}
-									</span>
-								</div>
-							</div>
-						</div>
-
-						{/* Title Header */}
-						<div className='text-center space-y-2 mb-10'>
-							<h1 className='text-2xl md:text-3xl font-bold tracking-tight text-gray-900 font-serif'>
-								{fic.title}
-							</h1>
-							<p className='text-sm text-gray-600 font-sans'>
-								por <span className='font-semibold text-gray-900'>{fic.author}</span>
-							</p>
-						</div>
-
-						{/* Summary Block (NO FORCED ITALIC, clean comfortable typography) */}
-						{fic.summary && (
-							<div className={`p-5 rounded-md border ${themeCls.box} text-xs font-sans space-y-2 mb-8`}>
-								<h4 className='font-bold uppercase tracking-wider text-xs text-[#990000]'>Resumen:</h4>
-								<div className='leading-relaxed whitespace-pre-line text-sm text-gray-800 font-normal not-italic'>
-									{fic.summary}
-								</div>
-							</div>
-						)}
-
-						{/* Notes Block */}
-						{fic.notes && (
-							<div className={`p-4 rounded-md border ${themeCls.box} text-xs font-sans space-y-1 mb-8`}>
-								<h4 className='font-bold uppercase tracking-wider text-xs text-gray-800'>Notas del autor:</h4>
-								<div className='leading-relaxed whitespace-pre-line text-xs text-gray-700 font-normal not-italic'>
-									{fic.notes}
-								</div>
-							</div>
-						)}
-
-						<hr className='my-8 border-gray-300' />
-
 						{/* Story Chapter Content (Clean typography, normal font style, preserved formatting) */}
 						{viewMode === 'chapters' ? (
 							<article className='space-y-6'>
@@ -621,6 +547,23 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 					</div>
 				)}
 			</div>
+
+			{/* Details Modal on Demand */}
+			<FicDetailsModal
+				fic={fic}
+				isOpen={showDetailsModal}
+				onClose={() => setShowDetailsModal(false)}
+				onStartReading={(selected, chapterIdx) => {
+					if (chapterIdx !== undefined) {
+						handleChapterChange(chapterIdx);
+					}
+					setShowDetailsModal(false);
+				}}
+				onFicUpdated={(updated) => {
+					setFic(updated);
+					if (onFicUpdated) onFicUpdated(updated);
+				}}
+			/>
 		</div>
 	);
 }

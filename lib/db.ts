@@ -208,3 +208,73 @@ export async function updateReadingProgress(
 	}
 	await db.fics.update(ficId, updates);
 }
+
+/**
+ * Safely re-extracts summary and metadata from the stored EPUB binary blob
+ * without altering reading status, favorites, or user notes.
+ */
+export async function reprocessFicFromBlob(ficId: number): Promise<Fic | null> {
+	const fic = await db.fics.get(ficId);
+	if (!fic || fic.format !== 'epub') return null;
+
+	let blob: Blob | null = null;
+	let filename = `${fic.title}.epub`;
+
+	if (fic.fileId) {
+		const fileRecord = await db.files.get(fic.fileId);
+		if (fileRecord) {
+			blob = fileRecord.blob;
+			filename = fileRecord.filename || filename;
+		}
+	} else if (fic.fileData) {
+		blob = fic.fileData;
+	}
+
+	if (!blob) return null;
+
+	const { parseEpubMetadata } = await import('./epubParser');
+	const fresh = await parseEpubMetadata(blob, filename);
+
+	const updates: Partial<Fic> = {
+		summary: fresh.summary,
+		notes: fresh.notes || fic.notes,
+		chapters: fresh.chapters || fic.chapters,
+		wordCount: fresh.wordCount || fic.wordCount,
+		chapterCount: fresh.chapterCount || fic.chapterCount,
+		publicationStatus: fresh.publicationStatus || fic.publicationStatus,
+		rating: fresh.rating || fic.rating,
+		fandoms: fresh.fandoms.length > 0 ? fresh.fandoms : fic.fandoms,
+		fandom: fresh.fandom || fic.fandom,
+		relationships: fresh.relationships.length > 0 ? fresh.relationships : fic.relationships,
+		characters: fresh.characters.length > 0 ? fresh.characters : fic.characters,
+		additionalTags: fresh.additionalTags.length > 0 ? fresh.additionalTags : fic.additionalTags,
+		warnings: fresh.warnings.length > 0 ? fresh.warnings : fic.warnings,
+	};
+
+	await db.fics.update(ficId, updates);
+	return (await db.fics.get(ficId)) || null;
+}
+
+/**
+ * Reprocesses all stored EPUB fics in IndexedDB to repair summaries safely.
+ */
+export async function reprocessAllFicsFromBlobs(): Promise<{ updated: number; errors: number }> {
+	const allFics = await db.fics.toArray();
+	let updated = 0;
+	let errors = 0;
+
+	for (const fic of allFics) {
+		if (fic.id && fic.format === 'epub' && (fic.fileId || fic.fileData)) {
+			try {
+				const res = await reprocessFicFromBlob(fic.id);
+				if (res) updated++;
+			} catch (err) {
+				console.warn(`Could not reprocess fic #${fic.id}:`, err);
+				errors++;
+			}
+		}
+	}
+
+	return { updated, errors };
+}
+

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import type { Fic } from '../lib/db';
 import { db, deleteBookAndFile } from '../lib/db';
+import { FicSummary } from './FicSummary';
 import {
 	Heart,
 	CheckCircle,
@@ -12,16 +13,18 @@ import {
 	ChevronDown,
 	ChevronUp,
 	Calendar,
+	Info,
 } from 'lucide-react';
 
 interface BookCardProps {
 	fic: Fic;
 	onSelect: (fic: Fic) => void;
+	onOpenDetails?: (fic: Fic) => void;
 	onTagClick?: (type: 'fandom' | 'character' | 'relationship' | 'tag' | 'warning', value: string) => void;
 	onUpdated?: () => void;
 }
 
-export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps) {
+export function BookCard({ fic, onSelect, onOpenDetails, onTagClick, onUpdated }: BookCardProps) {
 	const [isEditing, setIsEditing] = useState(false);
 	const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
 
@@ -90,6 +93,9 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 	const allFandoms = fic.fandoms && fic.fandoms.length > 0 ? fic.fandoms : fic.fandom ? [fic.fandom] : [];
 	const allWarnings = fic.warnings && fic.warnings.length > 0 ? fic.warnings : fic.archiveWarnings || [];
 	const allTags = fic.additionalTags && fic.additionalTags.length > 0 ? fic.additionalTags : fic.tags || [];
+
+	const summaryTextLength = (fic.summary || '').replace(/<[^>]+>/g, '').length;
+	const isLongSummary = summaryTextLength > 240;
 
 	if (isEditing) {
 		return (
@@ -192,7 +198,10 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 
 	return (
 		<div
-			onClick={() => onSelect(fic)}
+			onClick={() => {
+				if (onOpenDetails) onOpenDetails(fic);
+				else onSelect(fic);
+			}}
 			className='group bg-white border border-gray-300 hover:border-[#990000] rounded-md p-5 shadow-xs hover:shadow-md transition-all cursor-pointer relative font-sans space-y-3.5'
 		>
 			{/* Top Bar: Badges + Quick Actions */}
@@ -268,6 +277,18 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 						<CheckCircle
 							className={`w-3.5 h-3.5 ${fic.isRead ? 'fill-emerald-100 text-emerald-600' : ''}`}
 						/>
+					</button>
+
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							if (onOpenDetails) onOpenDetails(fic);
+							else setIsEditing(true);
+						}}
+						title='Ver detalles de la obra'
+						className='p-1.5 rounded border border-gray-300 bg-white text-gray-600 hover:text-[#990000] hover:bg-gray-50 transition-colors cursor-pointer'
+					>
+						<Info className='w-3.5 h-3.5' />
 					</button>
 
 					<button
@@ -412,24 +433,26 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 				</div>
 			)}
 
-			{/* Summary Box (NO FORCED ITALIC, clean readable normal font style) */}
+			{/* CLEAN SUMMARY BOX (Preserves paragraphs, formatting, NO forced italics) */}
 			{fic.summary && (
-				<div className='text-xs text-gray-800 leading-relaxed font-sans bg-[#fafafa] border-l-2 border-[#990000] pl-3.5 py-1.5 not-italic relative'>
-					<p
-						className={`whitespace-pre-line font-normal not-italic text-gray-800 ${
-							!isSummaryExpanded && fic.summary.length > 300 ? 'line-clamp-3' : ''
-						}`}
-					>
-						{fic.summary}
-					</p>
-					{fic.summary.length > 300 && (
+				<div
+					onClick={(e) => e.stopPropagation()}
+					className='text-xs font-sans bg-[#fafafa] border-l-3 border-[#990000] pl-3.5 pr-3 py-2 rounded-r border border-gray-200/80 not-italic relative'
+				>
+					<FicSummary
+						summary={fic.summary}
+						isExpanded={isSummaryExpanded}
+						clampLines={3}
+					/>
+
+					{isLongSummary && (
 						<button
 							type='button'
 							onClick={(e) => {
 								e.stopPropagation();
 								setIsSummaryExpanded(!isSummaryExpanded);
 							}}
-							className='text-[11px] font-semibold text-[#990000] hover:underline mt-1.5 inline-flex items-center space-x-1 cursor-pointer not-italic'
+							className='text-[11px] font-semibold text-[#990000] hover:underline mt-2 inline-flex items-center space-x-1 cursor-pointer not-italic'
 						>
 							<span>{isSummaryExpanded ? 'Mostrar menos' : 'Leer resumen completo...'}</span>
 							{isSummaryExpanded ? <ChevronUp className='w-3 h-3' /> : <ChevronDown className='w-3 h-3' />}
@@ -468,14 +491,28 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					)}
 				</div>
 
-				<button
-					type='button'
-					onClick={() => onSelect(fic)}
-					className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded shadow-xs cursor-pointer transition-colors flex items-center space-x-1.5 ml-auto'
-				>
-					<BookOpen className='w-3.5 h-3.5' />
-					<span>{fic.format === 'pdf' ? 'Abrir PDF' : 'Leer obra'} →</span>
-				</button>
+				<div className='flex items-center space-x-2 ml-auto' onClick={(e) => e.stopPropagation()}>
+					<button
+						type='button'
+						onClick={() => {
+							if (onOpenDetails) onOpenDetails(fic);
+							else onSelect(fic);
+						}}
+						className='px-3 py-1.5 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 font-semibold rounded shadow-xs cursor-pointer transition-colors text-xs flex items-center space-x-1'
+					>
+						<Info className='w-3.5 h-3.5 text-gray-500' />
+						<span>Detalles</span>
+					</button>
+
+					<button
+						type='button'
+						onClick={() => onSelect(fic)}
+						className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded shadow-xs cursor-pointer transition-colors flex items-center space-x-1.5'
+					>
+						<BookOpen className='w-3.5 h-3.5' />
+						<span>{fic.format === 'pdf' ? 'Abrir PDF' : 'Leer obra'} →</span>
+					</button>
+				</div>
 			</div>
 		</div>
 	);
