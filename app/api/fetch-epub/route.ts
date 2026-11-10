@@ -1,93 +1,70 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-const API_KEY = process.env.GOOGLE_DRIVE_API_KEY || 'AIzaSyAJRzJqsycSev2cFsC3cDFzFLNkYI9MfCA';
-
-export async function GET(request: Request) {
-	const { searchParams } = new URL(request.url);
-	let targetUrl = searchParams.get('url');
+/**
+ * Proxy route for downloading publicly accessible EPUB or PDF files
+ * to bypass browser CORS restrictions when pasting direct links.
+ *
+ * NOTE: Google Drive private and shared drive files are imported directly
+ * in the client via Google Identity Services (OAuth) and Google Picker API.
+ */
+export async function GET(request: NextRequest) {
+	const searchParams = request.nextUrl.searchParams;
+	const targetUrl = searchParams.get('url');
 
 	if (!targetUrl) {
-		return NextResponse.json({ error: 'URL is required' }, { status: 400 });
+		return NextResponse.json({ error: 'Parameter "url" is required' }, { status: 400 });
 	}
 
 	try {
-		// 1. Detectar si es una carpeta de Google Drive (personal o de Unidad Compartida)
-		const folderMatch = targetUrl.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-		if (folderMatch && folderMatch[1]) {
-			const folderId = folderMatch[1];
-
-			// Añadimos supportsAllDrives=true e includeItemsFromAllDrives=true para soportar Unidades Compartidas
-			const driveQueryUrl = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&key=${API_KEY}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id, name, mimeType)`;
-
-			const res = await fetch(driveQueryUrl);
-			const data: any = await res.json();
-
-			if (!data.files || data.files.length === 0) {
-				return NextResponse.json(
-					{ error: 'La carpeta está vacía, no es pública o requiere permisos de la organización.' },
-					{ status: 400 },
-				);
-			}
-
-			// Filtrar únicamente los archivos EPUB
-			const epubFiles = data.files.filter(
-				(f: any) => f.name.toLowerCase().endsWith('.epub') || f.mimeType === 'application/epub+zip',
-			);
-
-			if (epubFiles.length === 0) {
-				return NextResponse.json(
-					{ error: 'Se encontró la carpeta, pero no contiene archivos .epub en su raíz.' },
-					{ status: 400 },
-				);
-			}
-
-			// Descargar todos los EPUBs de la carpeta
-			const downloadedFiles = [];
-			for (const fileMeta of epubFiles) {
-				const downloadRes = await fetch(
-					`https://www.googleapis.com/drive/v3/files/${fileMeta.id}?alt=media&key=${API_KEY}&supportsAllDrives=true`,
-				);
-				if (downloadRes.ok) {
-					const buffer = await downloadRes.arrayBuffer();
-					downloadedFiles.push({
-						name: fileMeta.name,
-						data: Buffer.from(buffer).toString('base64'),
-					});
-				}
-			}
-
-			return NextResponse.json({ files: downloadedFiles });
+		const parsedUrl = new URL(targetUrl);
+		if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+			return NextResponse.json({ error: 'Only HTTP and HTTPS URLs are allowed' }, { status: 400 });
 		}
 
-		// 2. Si es un archivo individual de Google Drive
-		if (targetUrl.includes('drive.google.com')) {
-			const fileIdMatch = targetUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || targetUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-			if (fileIdMatch && fileIdMatch[1]) {
-				targetUrl = `https://www.googleapis.com/drive/v3/files/${fileIdMatch[1]}?alt=media&key=${API_KEY}&supportsAllDrives=true`;
-			}
+		// Security: prevent SSRF to local internal network
+		const hostname = parsedUrl.hostname.toLowerCase();
+		if (
+			hostname === 'localhost' ||
+			hostname === '127.0.0.1' ||
+			hostname === '0.0.0.0' ||
+			hostname.startsWith('10.') ||
+			hostname.startsWith('192.168.') ||
+			hostname.startsWith('172.') ||
+			hostname.endsWith('.internal') ||
+			hostname.endsWith('.local')
+		) {
+			return NextResponse.json({ error: 'Access to private internal network addresses is blocked' }, { status: 403 });
 		}
 
 		const response = await fetch(targetUrl, {
 			headers: {
-				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+				'User-Agent': 'Mozilla/5.0 (compatible; AO3Reader/1.0; +https://archiveofourown.org)',
+				Accept: 'application/epub+zip, application/pdf, */*',
 			},
 			redirect: 'follow',
 		});
 
 		if (!response.ok) {
-			return NextResponse.json({ error: `Failed to fetch: ${response.status}` }, { status: response.status });
+			return NextResponse.json(
+				{ error: `Remote server responded with status ${response.status} (${response.statusText})` },
+				{ status: response.status }
+			);
 		}
 
+		const contentType = response.headers.get('content-type') || 'application/octet-stream';
 		const arrayBuffer = await response.arrayBuffer();
 
 		return new NextResponse(arrayBuffer, {
+			status: 200,
 			headers: {
-				'Content-Type': 'application/epub+zip',
+				'Content-Type': contentType,
+				'Cache-Control': 'no-store',
 				'Access-Control-Allow-Origin': '*',
 			},
 		});
-	} catch (error) {
-		console.error('API Route Error:', error);
-		return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : 'Unknown network error';
+		console.error('[API fetch-epub error]:', message);
+		return NextResponse.json({ error: `Failed to download file: ${message}` }, { status: 500 });
 	}
 }
