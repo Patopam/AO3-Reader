@@ -67,7 +67,7 @@ export class FicDatabase extends Dexie {
 			fics: '++id, title, author, rating, fandom, status',
 		});
 
-		// Version 2 (schema with tables 'fics' and 'files' including indices for title, author, fandoms, tags, status, isFavorite, etc.)
+		// Version 2 (schema with tables 'fics' and 'files' including indices for title, author, fandoms, tags, status, isFavorite, isRead, etc.)
 		this.version(2)
 			.stores({
 				fics: '++id, title, author, rating, fandom, *fandoms, *tags, *additionalTags, status, isFavorite, isRead, format, wordCount, chapterCount, importedAt, lastReadAt',

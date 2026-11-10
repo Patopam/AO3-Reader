@@ -9,12 +9,9 @@ import {
 	BookOpen,
 	Trash2,
 	Edit3,
-	FileText,
 	ChevronDown,
 	ChevronUp,
 	Calendar,
-	BookMarked,
-	Layers,
 } from 'lucide-react';
 
 interface BookCardProps {
@@ -39,7 +36,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 	const handleDelete = async (e: React.MouseEvent) => {
 		e.stopPropagation();
 		if (!fic.id) return;
-		if (window.confirm(`Are you sure you want to delete "${fic.title}" and its file from your library?`)) {
+		if (window.confirm(`¿Estás seguro de eliminar "${fic.title}" y su archivo de tu biblioteca?`)) {
 			await deleteBookAndFile(fic.id);
 			if (onUpdated) onUpdated();
 		}
@@ -80,7 +77,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 		if (onUpdated) onUpdated();
 	};
 
-	// Rating color style
+	// Rating color style (Classic AO3 palette)
 	const getRatingBadgeClass = (r: string | null) => {
 		const val = (r || '').toLowerCase();
 		if (val.includes('general')) return 'bg-emerald-50 text-emerald-800 border-emerald-300';
@@ -98,17 +95,17 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 		return (
 			<div
 				onClick={(e) => e.stopPropagation()}
-				className='bg-white border-2 border-[#990000] p-5 rounded-md shadow-lg text-xs space-y-3 font-sans'
+				className='bg-white border-2 border-[#990000] p-5 rounded-md shadow-md text-xs space-y-3 font-sans'
 			>
 				<div className='flex justify-between items-center border-b pb-2'>
-					<h4 className='font-bold text-sm text-[#990000] uppercase tracking-wider'>Edit Work Metadata</h4>
+					<h4 className='font-bold text-sm text-[#990000] uppercase tracking-wider'>Editar Metadatos</h4>
 					<button onClick={() => setIsEditing(false)} className='text-gray-400 hover:text-gray-600 font-bold'>
 						✕
 					</button>
 				</div>
 				<div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
 					<div>
-						<label className='block font-semibold text-gray-700 mb-1'>Title</label>
+						<label className='block font-semibold text-gray-700 mb-1'>Título</label>
 						<input
 							type='text'
 							value={editTitle}
@@ -117,7 +114,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 						/>
 					</div>
 					<div>
-						<label className='block font-semibold text-gray-700 mb-1'>Author</label>
+						<label className='block font-semibold text-gray-700 mb-1'>Autor</label>
 						<input
 							type='text'
 							value={editAuthor}
@@ -138,7 +135,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 						/>
 					</div>
 					<div>
-						<label className='block font-semibold text-gray-700 mb-1'>Rating</label>
+						<label className='block font-semibold text-gray-700 mb-1'>Clasificación</label>
 						<select
 							value={editRating}
 							onChange={(e) => setEditRating(e.target.value)}
@@ -152,7 +149,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 						</select>
 					</div>
 					<div>
-						<label className='block font-semibold text-gray-700 mb-1'>Publication Status</label>
+						<label className='block font-semibold text-gray-700 mb-1'>Estado</label>
 						<select
 							value={editStatus}
 							onChange={(e) => setEditStatus(e.target.value as any)}
@@ -166,27 +163,27 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 				</div>
 
 				<div>
-					<label className='block font-semibold text-gray-700 mb-1'>Summary</label>
+					<label className='block font-semibold text-gray-700 mb-1'>Resumen</label>
 					<textarea
 						value={editSummary}
 						onChange={(e) => setEditSummary(e.target.value)}
 						className='w-full border border-gray-300 p-2 rounded h-24 focus:outline-none focus:border-[#990000]'
-						placeholder='Enter summary...'
+						placeholder='Ingresa el resumen de la obra...'
 					/>
 				</div>
 
 				<div className='flex justify-end space-x-2 pt-2 border-t'>
 					<button
 						onClick={() => setIsEditing(false)}
-						className='px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold transition-colors'
+						className='px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-700 border border-gray-300 rounded font-semibold transition-colors cursor-pointer'
 					>
-						Cancel
+						Cancelar
 					</button>
 					<button
 						onClick={handleSaveEdit}
-						className='px-4 py-1.5 bg-[#990000] hover:bg-[#800000] text-white rounded font-bold shadow-xs transition-colors'
+						className='px-4 py-1.5 bg-[#990000] hover:bg-[#800000] text-white rounded font-bold shadow-xs transition-colors cursor-pointer'
 					>
-						Save Changes
+						Guardar cambios
 					</button>
 				</div>
 			</div>
@@ -223,9 +220,9 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 
 					{/* Read status tag */}
 					{fic.isRead && (
-						<span className='inline-flex items-center space-x-1 px-2 py-0.5 text-[10px] font-semibold bg-green-50 text-green-700 border border-green-200 rounded'>
-							<CheckCircle className='w-3 h-3 text-green-600' />
-							<span>Read</span>
+						<span className='inline-flex items-center space-x-1 px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 rounded'>
+							<CheckCircle className='w-3 h-3 text-emerald-600' />
+							<span>Leído</span>
 						</span>
 					)}
 
@@ -233,42 +230,44 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{fic.isFavorite && (
 						<span className='inline-flex items-center space-x-1 px-2 py-0.5 text-[10px] font-semibold bg-red-50 text-[#990000] border border-red-200 rounded'>
 							<Heart className='w-3 h-3 fill-red-600 text-red-600' />
-							<span>Favorite</span>
+							<span>Favorito</span>
 						</span>
 					)}
 
 					{/* Progress Pill if started */}
 					{fic.readingProgress > 0 && (
 						<span className='text-[10px] font-medium bg-gray-100 text-gray-700 px-2 py-0.5 rounded border border-gray-200'>
-							{fic.readingProgress}% completed
+							{fic.readingProgress}% completado
 						</span>
 					)}
 				</div>
 
-				{/* Action Buttons */}
-				<div className='flex items-center space-x-1 shrink-0' onClick={(e) => e.stopPropagation()}>
+				{/* Action Buttons (Light buttons with clear contrast, zero dark buttons) */}
+				<div className='flex items-center space-x-1.5 shrink-0' onClick={(e) => e.stopPropagation()}>
 					<button
 						onClick={toggleFavorite}
-						title={fic.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-						className={`p-1.5 rounded border transition-colors ${
+						title={fic.isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+						className={`p-1.5 rounded border transition-colors cursor-pointer ${
 							fic.isFavorite
-								? 'bg-red-50 border-red-200 text-red-600 hover:bg-red-100'
-								: 'bg-gray-50 border-gray-200 text-gray-400 hover:text-red-600 hover:bg-gray-100'
+								? 'bg-red-50 border-red-300 text-red-600 hover:bg-red-100'
+								: 'bg-white border-gray-300 text-gray-400 hover:text-red-600 hover:bg-gray-50'
 						}`}
 					>
-						<Heart className={`w-3.5 h-3.5 ${fic.isFavorite ? 'fill-red-600' : ''}`} />
+						<Heart className={`w-3.5 h-3.5 ${fic.isFavorite ? 'fill-red-600 text-red-600' : ''}`} />
 					</button>
 
 					<button
 						onClick={toggleRead}
-						title={fic.isRead ? 'Mark as unread' : 'Mark as read'}
-						className={`p-1.5 rounded border transition-colors ${
+						title={fic.isRead ? 'Marcar como no leído' : 'Marcar como leído'}
+						className={`p-1.5 rounded border transition-colors cursor-pointer ${
 							fic.isRead
-								? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
-								: 'bg-gray-50 border-gray-200 text-gray-400 hover:text-green-700 hover:bg-gray-100'
+								? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100'
+								: 'bg-white border-gray-300 text-gray-400 hover:text-emerald-700 hover:bg-gray-50'
 						}`}
 					>
-						<CheckCircle className={`w-3.5 h-3.5 ${fic.isRead ? 'fill-green-100 text-green-600' : ''}`} />
+						<CheckCircle
+							className={`w-3.5 h-3.5 ${fic.isRead ? 'fill-emerald-100 text-emerald-600' : ''}`}
+						/>
 					</button>
 
 					<button
@@ -276,16 +275,16 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 							e.stopPropagation();
 							setIsEditing(true);
 						}}
-						title='Edit metadata'
-						className='p-1.5 rounded border border-gray-200 bg-gray-50 text-gray-500 hover:text-blue-600 hover:bg-gray-100 transition-colors'
+						title='Editar metadatos'
+						className='p-1.5 rounded border border-gray-300 bg-white text-gray-600 hover:text-blue-700 hover:bg-gray-50 transition-colors cursor-pointer'
 					>
 						<Edit3 className='w-3.5 h-3.5' />
 					</button>
 
 					<button
 						onClick={handleDelete}
-						title='Delete work'
-						className='p-1.5 rounded border border-gray-200 bg-gray-50 text-gray-400 hover:text-red-700 hover:bg-red-50 transition-colors'
+						title='Eliminar obra'
+						className='p-1.5 rounded border border-gray-300 bg-white text-gray-400 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer'
 					>
 						<Trash2 className='w-3.5 h-3.5' />
 					</button>
@@ -298,9 +297,9 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{fic.title}
 				</h3>
 				<p className='text-xs text-gray-700 mt-1'>
-					by{' '}
+					por{' '}
 					<span className='font-semibold text-gray-900 hover:underline'>
-						{fic.author || 'Unknown Author'}
+						{fic.author || 'Autor desconocido'}
 					</span>
 				</p>
 			</div>
@@ -335,7 +334,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{/* Warnings */}
 					{allWarnings.length > 0 && (
 						<div className='flex flex-wrap items-baseline gap-1'>
-							<span className='font-bold text-gray-900'>Warnings:</span>
+							<span className='font-bold text-gray-900'>Advertencias:</span>
 							{allWarnings.map((w, idx) => (
 								<span
 									key={idx}
@@ -355,7 +354,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{/* Relationships */}
 					{fic.relationships && fic.relationships.length > 0 && (
 						<div className='flex flex-wrap items-baseline gap-1'>
-							<span className='font-bold text-gray-900'>Relationships:</span>
+							<span className='font-bold text-gray-900'>Relaciones:</span>
 							{fic.relationships.map((rel, idx) => (
 								<span
 									key={idx}
@@ -375,7 +374,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{/* Characters */}
 					{fic.characters && fic.characters.length > 0 && (
 						<div className='flex flex-wrap items-baseline gap-1'>
-							<span className='font-bold text-gray-900'>Characters:</span>
+							<span className='font-bold text-gray-900'>Personajes:</span>
 							{fic.characters.map((char, idx) => (
 								<span
 									key={idx}
@@ -395,7 +394,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					{/* Additional Tags */}
 					{allTags.length > 0 && (
 						<div className='flex flex-wrap items-baseline gap-1 pt-1 border-t border-gray-200/60'>
-							<span className='font-bold text-gray-900'>Tags:</span>
+							<span className='font-bold text-gray-900'>Etiquetas:</span>
 							{allTags.map((tag, idx) => (
 								<span
 									key={idx}
@@ -413,11 +412,11 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 				</div>
 			)}
 
-			{/* Summary Box */}
+			{/* Summary Box (NO FORCED ITALIC, clean readable normal font style) */}
 			{fic.summary && (
-				<div className='text-xs text-gray-800 leading-relaxed font-sans bg-[#fafafa] border-l-2 border-[#990000] pl-3.5 py-1 italic relative'>
+				<div className='text-xs text-gray-800 leading-relaxed font-sans bg-[#fafafa] border-l-2 border-[#990000] pl-3.5 py-1.5 not-italic relative'>
 					<p
-						className={`whitespace-pre-line ${
+						className={`whitespace-pre-line font-normal not-italic text-gray-800 ${
 							!isSummaryExpanded && fic.summary.length > 300 ? 'line-clamp-3' : ''
 						}`}
 					>
@@ -430,9 +429,9 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 								e.stopPropagation();
 								setIsSummaryExpanded(!isSummaryExpanded);
 							}}
-							className='text-[11px] font-semibold text-[#990000] hover:underline mt-1 inline-flex items-center space-x-1 cursor-pointer not-italic'
+							className='text-[11px] font-semibold text-[#990000] hover:underline mt-1.5 inline-flex items-center space-x-1 cursor-pointer not-italic'
 						>
-							<span>{isSummaryExpanded ? 'Show less' : 'Read more...'}</span>
+							<span>{isSummaryExpanded ? 'Mostrar menos' : 'Leer resumen completo...'}</span>
 							{isSummaryExpanded ? <ChevronUp className='w-3 h-3' /> : <ChevronDown className='w-3 h-3' />}
 						</button>
 					)}
@@ -444,20 +443,20 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 				<div className='flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]'>
 					{fic.wordCount !== null && fic.wordCount !== undefined && (
 						<div>
-							<span className='font-bold text-gray-800'>Words:</span> {fic.wordCount.toLocaleString()}
+							<span className='font-bold text-gray-800'>Palabras:</span> {fic.wordCount.toLocaleString()}
 						</div>
 					)}
 
 					<div>
 						<span className='font-bold text-gray-800'>
-							{fic.format === 'pdf' ? 'Pages:' : 'Chapters:'}
+							{fic.format === 'pdf' ? 'Páginas:' : 'Capítulos:'}
 						</span>{' '}
 						{fic.chapterCount || 1}
 					</div>
 
 					{fic.publicationStatus && (
 						<div className='font-medium text-gray-700'>
-							<span className='font-bold text-gray-800'>Status:</span> {fic.publicationStatus}
+							<span className='font-bold text-gray-800'>Estado:</span> {fic.publicationStatus}
 						</div>
 					)}
 
@@ -475,7 +474,7 @@ export function BookCard({ fic, onSelect, onTagClick, onUpdated }: BookCardProps
 					className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded shadow-xs cursor-pointer transition-colors flex items-center space-x-1.5 ml-auto'
 				>
 					<BookOpen className='w-3.5 h-3.5' />
-					<span>{fic.format === 'pdf' ? 'Open PDF' : 'Read Work'} →</span>
+					<span>{fic.format === 'pdf' ? 'Abrir PDF' : 'Leer obra'} →</span>
 				</button>
 			</div>
 		</div>

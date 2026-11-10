@@ -14,11 +14,9 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Sun,
-	Moon,
 	Coffee,
-	Type,
-	AlignLeft,
-	List,
+	Moon,
+	SlidersHorizontal,
 } from 'lucide-react';
 
 interface ReaderViewProps {
@@ -26,7 +24,7 @@ interface ReaderViewProps {
 	onBack: () => void;
 }
 
-type ReaderTheme = 'default' | 'sepia' | 'dark' | 'black';
+type ReaderTheme = 'default' | 'sepia' | 'dark';
 type ReaderWidth = 'compact' | 'normal' | 'wide' | 'full';
 type ReaderFont = 'serif' | 'sans' | 'mono';
 
@@ -64,35 +62,30 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 	const [showSettings, setShowSettings] = useState<boolean>(false);
 
 	// Customization settings
-	const [fontSize, setFontSize] = useState<number>(17); // in pixels
+	const [fontSize, setFontSize] = useState<number>(18);
 	const [fontFamily, setFontFamily] = useState<ReaderFont>('serif');
 	const [theme, setTheme] = useState<ReaderTheme>('default');
 	const [contentWidth, setContentWidth] = useState<ReaderWidth>('normal');
-	const [lineHeight, setLineHeight] = useState<number>(1.75);
+	const [lineHeight] = useState<number>(1.8);
 
 	const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
-	// Load chapters and safely sanitize preface duplication using escapeRegex
+	// Load chapters cleanly
 	useEffect(() => {
 		async function loadChapters() {
 			setLoading(true);
 			const rawChapters: FicChapter[] =
 				fic.chapters && fic.chapters.length > 0
 					? fic.chapters
-					: [{ title: 'Chapter 1', content: fic.fullTextContent || 'No content found in this work.' }];
+					: [{ title: 'Capítulo 1', content: fic.fullTextContent || '<p>No se encontró contenido.</p>' }];
 
 			const safeTitleRegex = new RegExp(`^${escapeRegex(fic.title)}[\\s\\S]*?\\bby\\b.*?\\n+`, 'i');
 
 			const cleanedChapters = rawChapters.map((chap, idx) => {
 				if (idx === 0) {
 					let cleaned = chap.content;
-					if (fic.summary) {
-						cleaned = cleaned.replace(fic.summary, '');
-					}
-					cleaned = cleaned
-						.replace(/^Summary:?[\s\S]*?(?=\n\n|\r\n\r\n)/i, '')
-						.replace(safeTitleRegex, '')
-						.trim();
+					// If the first chapter duplicates the title line, clean safely
+					cleaned = cleaned.replace(safeTitleRegex, '').trim();
 					return { ...chap, content: cleaned || chap.content };
 				}
 				return chap;
@@ -139,44 +132,35 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 		setIsFavorite(next);
 	};
 
-	// Theme classes
+	// Theme color schemes (All light/comfortable, no dark buttons)
 	const getThemeClasses = () => {
 		switch (theme) {
 			case 'sepia':
 				return {
-					bg: 'bg-[#f8f1e3]',
-					text: 'text-[#473623]',
-					headerBg: 'bg-[#eee3ce] border-[#d9ccb4]',
-					navBg: 'bg-[#f2e7d3] border-[#d9ccb4]',
+					bg: 'bg-[#fbf4e8]',
+					text: 'text-[#443525]',
+					headerBg: 'bg-[#f4ebd9] border-[#e2d5bf]',
+					navBg: 'bg-[#eee4cf] border-[#e2d5bf]',
 					accent: 'text-[#8b2500]',
-					box: 'bg-[#eedec4] border-[#d9ccb4]',
+					box: 'bg-[#f5ecdc] border-[#e2d5bf]',
 				};
 			case 'dark':
 				return {
-					bg: 'bg-[#1e1e1e]',
-					text: 'text-[#d6d6d6]',
-					headerBg: 'bg-[#181818] border-[#333333]',
-					navBg: 'bg-[#252525] border-[#383838]',
-					accent: 'text-[#ff6b6b]',
-					box: 'bg-[#2a2a2a] border-[#3a3a3a]',
-				};
-			case 'black':
-				return {
-					bg: 'bg-black',
-					text: 'text-[#b0b0b0]',
-					headerBg: 'bg-[#0d0d0d] border-[#222]',
-					navBg: 'bg-[#141414] border-[#222]',
-					accent: 'text-[#ff5252]',
-					box: 'bg-[#161616] border-[#292929]',
+					bg: 'bg-[#f5f5f5]',
+					text: 'text-gray-900',
+					headerBg: 'bg-white border-gray-200',
+					navBg: 'bg-gray-100 border-gray-200',
+					accent: 'text-[#990000]',
+					box: 'bg-white border-gray-200',
 				};
 			default:
 				return {
 					bg: 'bg-white',
 					text: 'text-gray-900',
-					headerBg: 'bg-[#f7f7f7] border-gray-300',
-					navBg: 'bg-gray-100 border-gray-300',
+					headerBg: 'bg-[#fafafa] border-gray-200',
+					navBg: 'bg-[#f5f5f5] border-gray-200',
 					accent: 'text-[#990000]',
-					box: 'bg-gray-50 border-gray-200',
+					box: 'bg-[#fafafa] border-gray-200',
 				};
 		}
 	};
@@ -209,103 +193,135 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 
 	const allWarnings = fic.warnings && fic.warnings.length > 0 ? fic.warnings : fic.archiveWarnings || [];
 
+	/**
+	 * Renders chapter text safely:
+	 * Supports rich HTML paragraphs, keeping italics only where specified,
+	 * with normal font style for standard text.
+	 */
+	const renderChapterBody = (content: string) => {
+		if (!content) return null;
+
+		// If content already contains HTML tags like <p>, render HTML
+		if (content.includes('<p>') || content.includes('<div>') || content.includes('<br')) {
+			return (
+				<div
+					style={{ fontSize: `${fontSize}px`, lineHeight }}
+					className='font-normal not-italic text-gray-900 space-y-4 font-serif [&_p]:mb-4 [&_p]:leading-relaxed [&_em]:italic [&_i]:italic [&_strong]:font-bold [&_b]:font-bold [&_blockquote]:border-l-2 [&_blockquote]:border-[#990000] [&_blockquote]:pl-4 [&_blockquote]:my-4'
+					dangerouslySetInnerHTML={{ __html: content }}
+				/>
+			);
+		}
+
+		// Fallback for plain text: split by double newlines into clean paragraphs
+		const paragraphs = content.split(/\n\n+/).filter(Boolean);
+		return (
+			<div style={{ fontSize: `${fontSize}px`, lineHeight }} className='space-y-4 font-normal not-italic'>
+				{paragraphs.map((p, i) => (
+					<p key={i} className='mb-4 leading-relaxed font-normal not-italic text-gray-900'>
+						{p.trim()}
+					</p>
+				))}
+			</div>
+		);
+	};
+
 	return (
 		<div className={`flex-1 flex flex-col h-full ${themeCls.bg} ${themeCls.text} font-sans overflow-hidden`}>
-			{/* Shared Header Bar */}
+			{/* Reader Top Navbar (Clean light aesthetic, zero dark buttons) */}
 			<header
-				className={`flex items-center justify-between px-4 md:px-6 py-2.5 border-b ${themeCls.headerBg} z-20 text-xs shadow-xs`}
+				className={`flex items-center justify-between px-4 md:px-8 py-2.5 border-b ${themeCls.headerBg} z-20 text-xs shadow-xs`}
 			>
 				<div className='flex items-center space-x-3 overflow-hidden'>
 					<button
 						onClick={onBack}
-						className='flex items-center space-x-1.5 px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-bold hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors shadow-xs shrink-0 text-gray-800 dark:text-gray-200'
+						className='flex items-center space-x-1.5 px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-800 rounded font-bold cursor-pointer transition-colors shadow-xs shrink-0'
 					>
 						<ArrowLeft className='w-4 h-4' />
-						<span className='hidden sm:inline'>Works</span>
+						<span className='hidden sm:inline'>Obras</span>
 					</button>
 
 					<div className='truncate'>
-						<h2 className='font-bold text-sm truncate font-serif text-[#990000] dark:text-red-400'>
-							{fic.title}
-						</h2>
-						<p className='text-[11px] text-gray-500 truncate'>
-							by <span className='font-semibold'>{fic.author}</span>
+						<h2 className='font-bold text-sm truncate font-serif text-[#990000]'>{fic.title}</h2>
+						<p className='text-[11px] text-gray-600 truncate'>
+							por <span className='font-semibold text-gray-900'>{fic.author}</span>
 						</p>
 					</div>
 				</div>
 
 				<div className='flex items-center space-x-2 shrink-0'>
-					{/* Mode Switcher */}
+					{/* Chapter vs Entire Work Mode Switcher */}
 					{chapters.length > 1 && (
 						<button
 							onClick={() => setViewMode(viewMode === 'chapters' ? 'entire' : 'chapters')}
-							className='px-2.5 py-1.5 bg-white dark:bg-gray-800 hover:bg-red-50 border border-gray-300 dark:border-gray-600 rounded font-semibold text-xs cursor-pointer transition-colors shadow-xs hidden sm:inline-flex items-center space-x-1'
+							className='px-2.5 py-1.5 bg-white hover:bg-red-50 border border-gray-300 text-[#990000] rounded font-semibold text-xs cursor-pointer transition-colors shadow-xs hidden sm:inline-flex items-center space-x-1'
 						>
 							<BookOpen className='w-3.5 h-3.5 text-[#990000]' />
-							<span>{viewMode === 'chapters' ? 'Entire Work' : 'Chapter Mode'}</span>
+							<span>{viewMode === 'chapters' ? 'Toda la obra' : 'Por capítulos'}</span>
 						</button>
 					)}
 
-					{/* Settings Toggle */}
+					{/* Display Settings Toggle */}
 					<button
 						onClick={() => setShowSettings(!showSettings)}
-						title='Display Settings'
-						className={`p-1.5 rounded border transition-colors ${
+						title='Ajustes de visualización'
+						className={`p-1.5 rounded border transition-colors cursor-pointer ${
 							showSettings
 								? 'bg-red-50 border-red-300 text-[#990000]'
-								: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50'
+								: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 						}`}
 					>
 						<Sliders className='w-4 h-4' />
 					</button>
 
-					{/* Favorite */}
+					{/* Favorite Toggle */}
 					<button
 						onClick={handleToggleFavorite}
-						title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-						className={`p-1.5 rounded border transition-colors ${
+						title={isFavorite ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+						className={`p-1.5 rounded border transition-colors cursor-pointer ${
 							isFavorite
 								? 'bg-red-50 border-red-300 text-red-600'
-								: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 hover:text-red-600'
+								: 'bg-white border-gray-300 text-gray-400 hover:text-red-600 hover:bg-gray-50'
 						}`}
 					>
-						<Heart className={`w-4 h-4 ${isFavorite ? 'fill-red-600' : ''}`} />
+						<Heart className={`w-4 h-4 ${isFavorite ? 'fill-red-600 text-red-600' : ''}`} />
 					</button>
 
-					{/* Mark Read */}
+					{/* Mark Read Toggle */}
 					<button
 						onClick={handleToggleRead}
-						title={isRead ? 'Mark as unread' : 'Mark as read'}
-						className={`flex items-center space-x-1 px-2.5 py-1.5 rounded border text-xs font-semibold cursor-pointer transition-colors ${
+						title={isRead ? 'Marcar como no leído' : 'Marcar como leído'}
+						className={`flex items-center space-x-1.5 px-3 py-1.5 rounded border text-xs font-semibold cursor-pointer transition-colors ${
 							isRead
-								? 'bg-green-50 border-green-300 text-green-700'
-								: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-600 hover:text-green-700'
+								? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+								: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 						}`}
 					>
-						<CheckCircle className={`w-3.5 h-3.5 ${isRead ? 'fill-green-100 text-green-600' : ''}`} />
-						<span className='hidden md:inline'>{isRead ? 'Read' : 'Mark Read'}</span>
+						<CheckCircle
+							className={`w-3.5 h-3.5 ${isRead ? 'fill-emerald-100 text-emerald-600' : 'text-gray-400'}`}
+						/>
+						<span className='hidden md:inline'>{isRead ? 'Leído' : 'Marcar leído'}</span>
 					</button>
 				</div>
 			</header>
 
-			{/* Reading Display Settings Drawer */}
+			{/* Display Settings Toolbar (Crisp, light, intuitive controls) */}
 			{showSettings && (
 				<div
 					className={`border-b ${themeCls.navBg} px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 text-xs z-10 shadow-inner`}
 				>
 					{/* Font Size */}
 					<div className='flex items-center space-x-2'>
-						<span className='font-bold text-gray-600 dark:text-gray-400'>Size:</span>
+						<span className='font-bold text-gray-700'>Tamaño:</span>
 						<button
-							onClick={() => setFontSize((s) => Math.max(13, s - 1))}
-							className='px-2.5 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-bold'
+							onClick={() => setFontSize((s) => Math.max(14, s - 1))}
+							className='px-2.5 py-1 bg-white border border-gray-300 rounded font-bold text-gray-700 hover:bg-gray-50 cursor-pointer shadow-xs'
 						>
 							A-
 						</button>
-						<span className='font-mono w-6 text-center'>{fontSize}</span>
+						<span className='font-mono w-6 text-center text-gray-800'>{fontSize}</span>
 						<button
-							onClick={() => setFontSize((s) => Math.min(28, s + 1))}
-							className='px-2.5 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-bold'
+							onClick={() => setFontSize((s) => Math.min(26, s + 1))}
+							className='px-2.5 py-1 bg-white border border-gray-300 rounded font-bold text-gray-700 hover:bg-gray-50 cursor-pointer shadow-xs'
 						>
 							A+
 						</button>
@@ -313,33 +329,33 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 
 					{/* Font Family */}
 					<div className='flex items-center space-x-1'>
-						<span className='font-bold text-gray-600 dark:text-gray-400 mr-1'>Font:</span>
+						<span className='font-bold text-gray-700 mr-1'>Tipografía:</span>
 						<button
 							onClick={() => setFontFamily('serif')}
-							className={`px-2.5 py-1 rounded border font-serif ${
+							className={`px-3 py-1 rounded border font-serif cursor-pointer transition-colors ${
 								fontFamily === 'serif'
-									? 'bg-[#990000] text-white border-[#990000]'
-									: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600'
+									? 'bg-[#990000] text-white border-[#990000] font-bold'
+									: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 							}`}
 						>
 							Serif
 						</button>
 						<button
 							onClick={() => setFontFamily('sans')}
-							className={`px-2.5 py-1 rounded border font-sans ${
+							className={`px-3 py-1 rounded border font-sans cursor-pointer transition-colors ${
 								fontFamily === 'sans'
-									? 'bg-[#990000] text-white border-[#990000]'
-									: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600'
+									? 'bg-[#990000] text-white border-[#990000] font-bold'
+									: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 							}`}
 						>
 							Sans
 						</button>
 						<button
 							onClick={() => setFontFamily('mono')}
-							className={`px-2.5 py-1 rounded border font-mono ${
+							className={`px-3 py-1 rounded border font-mono cursor-pointer transition-colors ${
 								fontFamily === 'mono'
-									? 'bg-[#990000] text-white border-[#990000]'
-									: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600'
+									? 'bg-[#990000] text-white border-[#990000] font-bold'
+									: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 							}`}
 						>
 							Mono
@@ -347,85 +363,71 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 					</div>
 
 					{/* Themes */}
-					<div className='flex items-center space-x-1.5'>
-						<span className='font-bold text-gray-600 dark:text-gray-400 mr-1'>Theme:</span>
+					<div className='flex items-center space-x-2'>
+						<span className='font-bold text-gray-700 mr-1'>Tema:</span>
 						<button
 							onClick={() => setTheme('default')}
-							className={`p-1.5 rounded-full border-2 ${
-								theme === 'default' ? 'border-[#990000] scale-110' : 'border-gray-300'
-							} bg-white`}
-							title='Light Paper'
+							className={`px-2.5 py-1 rounded border text-xs cursor-pointer flex items-center space-x-1 ${
+								theme === 'default'
+									? 'bg-[#990000] text-white border-[#990000] font-bold'
+									: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+							}`}
 						>
-							<Sun className='w-3.5 h-3.5 text-gray-800' />
+							<Sun className='w-3.5 h-3.5' />
+							<span>Blanco</span>
 						</button>
 						<button
 							onClick={() => setTheme('sepia')}
-							className={`p-1.5 rounded-full border-2 ${
-								theme === 'sepia' ? 'border-[#990000] scale-110' : 'border-gray-400'
-							} bg-[#f8f1e3]`}
-							title='Warm Sepia'
+							className={`px-2.5 py-1 rounded border text-xs cursor-pointer flex items-center space-x-1 ${
+								theme === 'sepia'
+									? 'bg-[#8b2500] text-white border-[#8b2500] font-bold'
+									: 'bg-[#f4ebd9] border-[#e2d5bf] text-[#443525] hover:bg-[#eee4cf]'
+							}`}
 						>
-							<Coffee className='w-3.5 h-3.5 text-[#5f4b32]' />
-						</button>
-						<button
-							onClick={() => setTheme('dark')}
-							className={`p-1.5 rounded-full border-2 ${
-								theme === 'dark' ? 'border-red-400 scale-110' : 'border-gray-600'
-							} bg-[#1e1e1e]`}
-							title='Night Dark'
-						>
-							<Moon className='w-3.5 h-3.5 text-gray-200' />
-						</button>
-						<button
-							onClick={() => setTheme('black')}
-							className={`p-1.5 rounded-full border-2 ${
-								theme === 'black' ? 'border-red-500 scale-110' : 'border-gray-700'
-							} bg-black`}
-							title='Pitch Black'
-						>
-							<div className='w-3.5 h-3.5 rounded-full bg-black border border-gray-600' />
+							<Coffee className='w-3.5 h-3.5' />
+							<span>Sepia</span>
 						</button>
 					</div>
 
 					{/* Width */}
 					<div className='flex items-center space-x-1'>
-						<span className='font-bold text-gray-600 dark:text-gray-400 mr-1'>Width:</span>
+						<span className='font-bold text-gray-700 mr-1'>Ancho:</span>
 						{(['compact', 'normal', 'wide', 'full'] as ReaderWidth[]).map((w) => (
 							<button
 								key={w}
 								onClick={() => setContentWidth(w)}
-								className={`px-2 py-0.5 rounded capitalize ${
+								className={`px-2.5 py-1 rounded capitalize border cursor-pointer transition-colors ${
 									contentWidth === w
-										? 'bg-[#990000] text-white'
-										: 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600'
+										? 'bg-[#990000] text-white border-[#990000] font-bold'
+										: 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
 								}`}
 							>
-								{w}
+								{w === 'compact' ? 'Estrecho' : w === 'normal' ? 'Normal' : w === 'wide' ? 'Ancho' : 'Completo'}
 							</button>
 						))}
 					</div>
 				</div>
 			)}
 
-			{/* Chapter Navigation Bar (when in chapters mode and multiple chapters) */}
+			{/* Chapter Navigation Bar (In chapter mode) */}
 			{viewMode === 'chapters' && chapters.length > 1 && (
 				<div
-					className={`border-b ${themeCls.navBg} px-4 md:px-6 py-2 flex justify-between items-center text-xs shrink-0`}
+					className={`border-b ${themeCls.navBg} px-4 md:px-8 py-2 flex justify-between items-center text-xs shrink-0`}
 				>
 					<button
 						disabled={currentChapterIdx === 0}
 						onClick={() => handleChapterChange(currentChapterIdx - 1)}
-						className='flex items-center space-x-1 px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-semibold disabled:opacity-30 cursor-pointer transition-colors shadow-xs'
+						className='flex items-center space-x-1 px-3 py-1.5 bg-white border border-gray-300 rounded font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-30 cursor-pointer transition-colors shadow-xs'
 					>
 						<ChevronLeft className='w-3.5 h-3.5' />
-						<span>Previous</span>
+						<span>Capítulo anterior</span>
 					</button>
 
 					<div className='flex items-center space-x-2'>
 						<select
 							value={currentChapterIdx}
 							onChange={(e) => handleChapterChange(parseInt(e.target.value, 10))}
-							className='bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2.5 py-1 font-semibold text-xs cursor-pointer focus:outline-none focus:border-[#990000]'
+							className='bg-white border border-gray-300 rounded px-3 py-1 font-semibold text-xs cursor-pointer focus:outline-none focus:border-[#990000] text-gray-800'
 						>
 							{chapters.map((chap, idx) => (
 								<option key={idx} value={idx}>
@@ -434,88 +436,88 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 							))}
 						</select>
 						<span className='text-gray-500 font-mono text-[11px] hidden sm:inline'>
-							({currentChapterIdx + 1} of {chapters.length})
+							({currentChapterIdx + 1} de {chapters.length})
 						</span>
 					</div>
 
 					<button
 						disabled={currentChapterIdx === chapters.length - 1}
 						onClick={() => handleChapterChange(currentChapterIdx + 1)}
-						className='flex items-center space-x-1 px-3 py-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-semibold disabled:opacity-30 cursor-pointer transition-colors shadow-xs'
+						className='flex items-center space-x-1 px-3 py-1.5 bg-white border border-gray-300 rounded font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-30 cursor-pointer transition-colors shadow-xs'
 					>
-						<span>Next</span>
+						<span>Siguiente capítulo</span>
 						<ChevronRight className='w-3.5 h-3.5' />
 					</button>
 				</div>
 			)}
 
-			{/* Scrollable Reader Body */}
+			{/* Reader Content Body */}
 			<div ref={scrollContainerRef} className='flex-1 overflow-y-auto p-4 md:p-12'>
 				{loading ? (
 					<div className='flex justify-center items-center h-64 text-gray-500 font-medium'>
-						Loading story text...
+						Cargando texto de la obra...
 					</div>
 				) : (
 					<div className={`${getWidthClass()} mx-auto space-y-8 ${getFontClass()} leading-relaxed`}>
 						{/* Full AO3 Metadata Header */}
-						<div className={`border-b border-gray-300 dark:border-gray-700 pb-6 mb-8 font-sans text-xs space-y-2`}>
+						<div className='border-b border-gray-300 pb-6 mb-8 font-sans text-xs space-y-2 text-gray-800'>
 							{fic.rating && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Rating:</span>
+									<span className='font-bold text-gray-900'>Clasificación:</span>
 									<span className={`font-semibold ${themeCls.accent}`}>{fic.rating}</span>
 								</div>
 							)}
 
 							{allWarnings.length > 0 && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Archive Warnings:</span>
+									<span className='font-bold text-gray-900'>Advertencias:</span>
 									<span className='font-medium'>{allWarnings.join(', ')}</span>
 								</div>
 							)}
 
 							{fic.category && fic.category.length > 0 && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Category:</span>
+									<span className='font-bold text-gray-900'>Categoría:</span>
 									<span>{fic.category.join(', ')}</span>
 								</div>
 							)}
 
 							{fic.fandom && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Fandom:</span>
-									<span className='font-medium'>{fic.fandom}</span>
+									<span className='font-bold text-gray-900'>Fandom:</span>
+									<span className='font-medium text-[#990000]'>{fic.fandom}</span>
 								</div>
 							)}
 
 							{fic.relationships && fic.relationships.length > 0 && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Relationships:</span>
+									<span className='font-bold text-gray-900'>Relaciones:</span>
 									<span>{fic.relationships.join(' · ')}</span>
 								</div>
 							)}
 
 							{fic.characters && fic.characters.length > 0 && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Characters:</span>
+									<span className='font-bold text-gray-900'>Personajes:</span>
 									<span>{fic.characters.join(' · ')}</span>
 								</div>
 							)}
 
 							{fic.additionalTags && fic.additionalTags.length > 0 && (
 								<div className='grid grid-cols-[130px_1fr] gap-2'>
-									<span className='font-bold opacity-80'>Additional Tags:</span>
+									<span className='font-bold text-gray-900'>Etiquetas:</span>
 									<span>{fic.additionalTags.join(', ')}</span>
 								</div>
 							)}
 
-							<div className='flex flex-wrap justify-between items-center text-gray-500 pt-3 border-t border-gray-200 dark:border-gray-800 text-[11px] font-sans mt-4'>
+							<div className='flex flex-wrap justify-between items-center text-gray-500 pt-3 border-t border-gray-200 text-[11px] font-sans mt-4'>
 								<div className='space-x-4'>
-									{fic.language && <span>Language: {fic.language}</span>}
-									{fic.wordCount && <span>Words: {fic.wordCount.toLocaleString()}</span>}
+									{fic.language && <span>Idioma: {fic.language}</span>}
+									{fic.wordCount && <span>Palabras: {fic.wordCount.toLocaleString()}</span>}
 								</div>
 								<div>
 									<span>
-										Chapters: {chapters.length}/{chapters.length}
+										Capítulos: {chapters.length}/{chapters.length}
 									</span>
 								</div>
 							</div>
@@ -523,101 +525,97 @@ export function ReaderView({ fic, onBack }: ReaderViewProps) {
 
 						{/* Title Header */}
 						<div className='text-center space-y-2 mb-10'>
-							<h1 className='text-2xl md:text-3xl font-bold tracking-tight'>{fic.title}</h1>
-							<p className='text-sm text-gray-600 dark:text-gray-400 font-sans'>
-								by <span className='font-semibold text-gray-900 dark:text-gray-100'>{fic.author}</span>
+							<h1 className='text-2xl md:text-3xl font-bold tracking-tight text-gray-900 font-serif'>
+								{fic.title}
+							</h1>
+							<p className='text-sm text-gray-600 font-sans'>
+								por <span className='font-semibold text-gray-900'>{fic.author}</span>
 							</p>
 						</div>
 
-						{/* Summary Block */}
+						{/* Summary Block (NO FORCED ITALIC, clean comfortable typography) */}
 						{fic.summary && (
-							<div className={`p-4 rounded-md border ${themeCls.box} text-xs font-sans space-y-1 mb-8`}>
-								<h4 className='font-bold uppercase tracking-wider text-xs opacity-70'>Summary:</h4>
-								<div className='leading-relaxed whitespace-pre-line text-sm italic'>{fic.summary}</div>
+							<div className={`p-5 rounded-md border ${themeCls.box} text-xs font-sans space-y-2 mb-8`}>
+								<h4 className='font-bold uppercase tracking-wider text-xs text-[#990000]'>Resumen:</h4>
+								<div className='leading-relaxed whitespace-pre-line text-sm text-gray-800 font-normal not-italic'>
+									{fic.summary}
+								</div>
 							</div>
 						)}
 
 						{/* Notes Block */}
 						{fic.notes && (
 							<div className={`p-4 rounded-md border ${themeCls.box} text-xs font-sans space-y-1 mb-8`}>
-								<h4 className='font-bold uppercase tracking-wider text-xs opacity-70'>Notes:</h4>
-								<div className='leading-relaxed whitespace-pre-line text-xs'>{fic.notes}</div>
+								<h4 className='font-bold uppercase tracking-wider text-xs text-gray-800'>Notas del autor:</h4>
+								<div className='leading-relaxed whitespace-pre-line text-xs text-gray-700 font-normal not-italic'>
+									{fic.notes}
+								</div>
 							</div>
 						)}
 
-						<hr className='my-8 border-gray-300 dark:border-gray-700' />
+						<hr className='my-8 border-gray-300' />
 
-						{/* Story Chapter Content */}
+						{/* Story Chapter Content (Clean typography, normal font style, preserved formatting) */}
 						{viewMode === 'chapters' ? (
 							<article className='space-y-6'>
-								<h3 className={`text-center font-bold text-xl md:text-2xl mb-8 ${themeCls.accent}`}>
+								<h3 className={`text-center font-bold text-xl md:text-2xl mb-8 ${themeCls.accent} font-serif`}>
 									{chapters[currentChapterIdx]?.title}
 								</h3>
-								<div
-									style={{ fontSize: `${fontSize}px`, lineHeight }}
-									className='whitespace-pre-wrap space-y-6'
-								>
-									{chapters[currentChapterIdx]?.content}
-								</div>
+								{renderChapterBody(chapters[currentChapterIdx]?.content || '')}
 							</article>
 						) : (
 							<div className='space-y-14'>
 								{chapters.map((chap, idx) => (
-									<article key={idx} className='border-t border-gray-300 dark:border-gray-700 pt-8 space-y-6'>
-										<h3 className={`text-center font-bold text-xl md:text-2xl mb-6 ${themeCls.accent}`}>
+									<article key={idx} className='border-t border-gray-300 pt-8 space-y-6'>
+										<h3 className={`text-center font-bold text-xl md:text-2xl mb-6 ${themeCls.accent} font-serif`}>
 											{chap.title}
 										</h3>
-										<div
-											style={{ fontSize: `${fontSize}px`, lineHeight }}
-											className='whitespace-pre-wrap space-y-6'
-										>
-											{chap.content}
-										</div>
+										{renderChapterBody(chap.content)}
 									</article>
 								))}
 							</div>
 						)}
 
-						{/* Bottom Chapter Navigation Bar (in chapter mode) */}
+						{/* Bottom Chapter Navigation Bar (In chapter mode) */}
 						{viewMode === 'chapters' && chapters.length > 1 && (
 							<div className='pt-10 flex justify-between items-center text-xs font-sans'>
 								<button
 									disabled={currentChapterIdx === 0}
 									onClick={() => handleChapterChange(currentChapterIdx - 1)}
-									className='flex items-center space-x-1 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-bold disabled:opacity-30 cursor-pointer shadow-xs'
+									className='flex items-center space-x-1.5 px-4 py-2 bg-white border border-gray-300 rounded font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-30 cursor-pointer shadow-xs transition-colors'
 								>
 									<ChevronLeft className='w-4 h-4' />
-									<span>Previous Chapter</span>
+									<span>Capítulo anterior</span>
 								</button>
 
 								<span className='font-semibold text-gray-500 font-mono'>
-									Chapter {currentChapterIdx + 1} of {chapters.length}
+									Capítulo {currentChapterIdx + 1} de {chapters.length}
 								</span>
 
 								<button
 									disabled={currentChapterIdx === chapters.length - 1}
 									onClick={() => handleChapterChange(currentChapterIdx + 1)}
-									className='flex items-center space-x-1 px-4 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded font-bold disabled:opacity-30 cursor-pointer shadow-xs'
+									className='flex items-center space-x-1.5 px-4 py-2 bg-white border border-gray-300 rounded font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-30 cursor-pointer shadow-xs transition-colors'
 								>
-									<span>Next Chapter</span>
+									<span>Siguiente capítulo</span>
 									<ChevronRight className='w-4 h-4' />
 								</button>
 							</div>
 						)}
 
-						{/* Bottom Mark as Read Card */}
-						<div className='mt-16 pt-8 border-t border-gray-300 dark:border-gray-700 flex flex-col items-center space-y-3 font-sans pb-12'>
-							<p className='text-xs text-gray-500'>Finished reading or want to mark progress?</p>
+						{/* Bottom Mark as Read Card (NO DARK BUTTONS - uses clean AO3 red or emerald) */}
+						<div className='mt-16 pt-8 border-t border-gray-300 flex flex-col items-center space-y-3 font-sans pb-12'>
+							<p className='text-xs text-gray-600'>¿Terminaste de leer esta obra?</p>
 							<button
 								onClick={handleToggleRead}
-								className={`px-6 py-2.5 rounded font-bold text-xs cursor-pointer transition-colors shadow-sm flex items-center space-x-2 ${
+								className={`px-6 py-2.5 rounded font-bold text-xs cursor-pointer transition-colors shadow-xs flex items-center space-x-2 ${
 									isRead
-										? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+										? 'bg-emerald-600 hover:bg-emerald-700 text-white'
 										: 'bg-[#990000] hover:bg-[#800000] text-white'
 								}`}
 							>
 								<CheckCircle className='w-4 h-4' />
-								<span>{isRead ? 'Work Marked as Read (Click to toggle)' : 'Mark Work as Read'}</span>
+								<span>{isRead ? 'Obra marcada como leída (Clic para desmarcar)' : 'Marcar obra como leída'}</span>
 							</button>
 						</div>
 					</div>

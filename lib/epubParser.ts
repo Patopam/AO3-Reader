@@ -2,43 +2,42 @@ import JSZip from 'jszip';
 import type { Fic, FicChapter } from './db';
 
 /**
- * Escapes regex special characters to prevent RegExp injection bugs
- * when matching titles or summaries with brackets/parentheses.
+ * Escapes regex special characters to prevent RegExp injection bugs.
  */
 export function escapeRegex(str: string): string {
 	return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
- * Cleanly extracts text from an HTML element, preserving paragraph breaks
+ * Extracts plain text from an HTML element, preserving paragraph breaks
  * and linebreaks, with automatic HTML entity decoding via DOMParser.
+ * Does NOT force italic styling.
  */
-function extractStructuredText(element: Element | null): string {
+function extractStructuredPlainText(element: Element | null): string {
 	if (!element) return '';
 
-	// Clone element so we can modify without side effects
 	const clone = element.cloneNode(true) as HTMLElement;
 
-	// Replace <br> and <hr> with newlines
-	clone.querySelectorAll('br').forEach((br) => {
-		br.replaceWith('\n');
-	});
-	clone.querySelectorAll('hr').forEach((hr) => {
-		hr.replaceWith('\n\n');
-	});
+	// Remove scripts, styles
+	clone.querySelectorAll('script, style').forEach((el) => el.remove());
 
-	// For block elements like <p>, <div>, <blockquote>, ensure separation
-	const blocks = clone.querySelectorAll('p, div, blockquote, li, dt, dd, h1, h2, h3, h4, h5, h6');
+	// Replace <br> with single newline and <hr> with double
+	clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+	clone.querySelectorAll('hr').forEach((hr) => hr.replaceWith('\n\n'));
+
+	// Find all paragraphs or block elements
+	const blocks = clone.querySelectorAll('p, div, blockquote, dd, li, h1, h2, h3, h4, h5, h6');
 	if (blocks.length > 0) {
 		const parts: string[] = [];
-		// If direct <p> tags exist, extract each
 		const pTags = clone.querySelectorAll('p');
 		if (pTags.length > 0) {
 			pTags.forEach((p) => {
 				const text = p.textContent?.trim();
 				if (text) parts.push(text);
 			});
-			return parts.join('\n\n');
+			if (parts.length > 0) {
+				return parts.join('\n\n');
+			}
 		}
 	}
 
@@ -50,9 +49,89 @@ function extractStructuredText(element: Element | null): string {
 }
 
 /**
- * Robust EPUB Parser using standard DOMParser (XML/HTML) and JSZip.
- * Extracts rich AO3 metadata, OPF metadata, summaries, tags, and chapters
- * without inventing fake data.
+ * Cleans chapter HTML to keep safe, readable formatting:
+ * Preserves <p>, <em>, <strong>, <i>, <b>, <blockquote>, <h3>, etc.
+ * Strips rogue stylesheets, scripts, and duplicate header metadata.
+ */
+function cleanChapterHtml(htmlDoc: Document): { title: string; html: string; text: string } {
+	// Look for story body container (AO3 standard: div.userstuff, or main, or body)
+	const storyContainer =
+		htmlDoc.querySelector('div.userstuff, div[role="main"], article, div.chapter, body') || htmlDoc.body;
+
+	const clone = (storyContainer ? storyContainer.cloneNode(true) : htmlDoc.body.cloneNode(true)) as HTMLElement;
+
+	// Remove scripts, stylesheets, and preface tags blocks if repeated
+	clone.querySelectorAll('script, style, link, meta, dl.tags, dl.meta, div.stats').forEach((el) => el.remove());
+
+	// Determine chapter title
+	let chapterTitle = '';
+	const titleElement = htmlDoc.querySelector('h2.title, h2, h1, .chapter-title, .title');
+	if (titleElement) {
+		const rawTitle = titleElement.textContent?.trim();
+		if (
+			rawTitle &&
+			rawTitle.length < 120 &&
+			!rawTitle.toLowerCase().includes('archive of our own') &&
+			!rawTitle.toLowerCase().includes('table of contents')
+		) {
+			chapterTitle = rawTitle;
+		}
+	}
+
+	// Remove the chapter heading from the inside body if we already captured it
+	if (chapterTitle) {
+		clone.querySelectorAll('h1, h2, h3').forEach((h) => {
+			if (h.textContent?.trim() === chapterTitle) {
+				h.remove();
+			}
+		});
+	}
+
+	// Clean paragraphs and format
+	const pList = clone.querySelectorAll('p');
+	let cleanHtml = '';
+	let cleanText = '';
+
+	if (pList.length > 0) {
+		const htmlParagraphs: string[] = [];
+		const textParagraphs: string[] = [];
+
+		pList.forEach((p) => {
+			const text = p.textContent?.trim();
+			if (text) {
+				// Clean inner HTML: keep <em>, <strong>, <i>, <b>, <span>, <a>
+				const inner = p.innerHTML
+					.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+					.replace(/style="[^"]*"/gi, '')
+					.trim();
+				htmlParagraphs.push(`<p class="mb-4 leading-relaxed">${inner}</p>`);
+				textParagraphs.push(text);
+			}
+		});
+
+		cleanHtml = htmlParagraphs.join('\n');
+		cleanText = textParagraphs.join('\n\n');
+	} else {
+		// Fallback for files without <p> tags
+		const text = extractStructuredPlainText(clone);
+		cleanText = text;
+		cleanHtml = text
+			.split(/\n\n+/)
+			.map((para) => `<p class="mb-4 leading-relaxed">${para.trim()}</p>`)
+			.join('\n');
+	}
+
+	return {
+		title: chapterTitle,
+		html: cleanHtml,
+		text: cleanText,
+	};
+}
+
+/**
+ * Robust EPUB Parser using DOMParser (XML/HTML) and JSZip.
+ * Separates library summary from book chapters/preface cleanly,
+ * and maintains proper typography without forced italics.
  */
 export async function parseEpubMetadata(
 	file: File | Blob,
@@ -61,7 +140,7 @@ export async function parseEpubMetadata(
 	const arrayBuffer = await file.arrayBuffer();
 
 	if (!arrayBuffer || arrayBuffer.byteLength < 50) {
-		throw new Error('The file is empty or too small to be a valid EPUB.');
+		throw new Error('El archivo está vacío o no es un EPUB válido.');
 	}
 
 	const zip = new JSZip();
@@ -69,7 +148,7 @@ export async function parseEpubMetadata(
 	try {
 		zipContent = await zip.loadAsync(arrayBuffer);
 	} catch {
-		throw new Error('The file could not be unzipped. It may be corrupt or not a valid .epub archive.');
+		throw new Error('El archivo no pudo descomprimirse. Es posible que esté corrupto o no sea un EPUB válido.');
 	}
 
 	const domParser = new DOMParser();
@@ -84,7 +163,6 @@ export async function parseEpubMetadata(
 		opfPath = rootfile?.getAttribute('full-path') || '';
 	}
 
-	// Fallback search if container.xml was missing or invalid
 	if (!opfPath) {
 		for (const filename of Object.keys(zipContent.files)) {
 			if (filename.toLowerCase().endsWith('.opf')) {
@@ -95,7 +173,7 @@ export async function parseEpubMetadata(
 	}
 
 	if (!opfPath || !zipContent.file(opfPath)) {
-		throw new Error('Invalid EPUB: No Package (.opf) file found inside archive.');
+		throw new Error('Archivo EPUB no válido: No se encontró el archivo de paquete (.opf).');
 	}
 
 	const opfDir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
@@ -103,34 +181,38 @@ export async function parseEpubMetadata(
 	const opfDoc = domParser.parseFromString(opfText, 'application/xml');
 
 	// Extract standard Dublin Core metadata
-	const cleanTitle = opfDoc.querySelector('title')?.textContent?.trim() ||
+	const cleanTitle =
+		opfDoc.querySelector('title')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:title')?.textContent?.trim() ||
 		fileName.replace(/\.[^/.]+$/, '');
 
-	const cleanAuthor = opfDoc.querySelector('creator')?.textContent?.trim() ||
+	const cleanAuthor =
+		opfDoc.querySelector('creator')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:creator')?.textContent?.trim() ||
 		'Unknown Author';
 
-	const opfDescription = opfDoc.querySelector('description')?.textContent?.trim() ||
+	const opfDescription =
+		opfDoc.querySelector('description')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:description')?.textContent?.trim() ||
 		null;
 
-	const language = opfDoc.querySelector('language')?.textContent?.trim() ||
+	const language =
+		opfDoc.querySelector('language')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:language')?.textContent?.trim() ||
 		null;
 
-	const publishedDate = opfDoc.querySelector('date')?.textContent?.trim() ||
+	const publishedDate =
+		opfDoc.querySelector('date')?.textContent?.trim() ||
 		opfDoc.querySelector('dc\\:date')?.textContent?.trim() ||
 		null;
 
-	// Subject tags from OPF
 	const subjectTags: string[] = [];
 	opfDoc.querySelectorAll('subject, dc\\:subject').forEach((s) => {
 		const tag = s.textContent?.trim();
 		if (tag && !subjectTags.includes(tag)) subjectTags.push(tag);
 	});
 
-	// 2. Read Manifest & Spine to load chapters in proper reading order
+	// Read Manifest & Spine for chapter order
 	const manifestItems = new Map<string, { href: string; mediaType: string }>();
 	opfDoc.querySelectorAll('manifest > item').forEach((item) => {
 		const id = item.getAttribute('id');
@@ -147,7 +229,7 @@ export async function parseEpubMetadata(
 		if (idref) spineItemRefs.push(idref);
 	});
 
-	// Variables for AO3 specific metadata
+	// AO3 metadata accumulators
 	let rating: string | null = null;
 	const archiveWarnings: string[] = [];
 	const categories: string[] = [];
@@ -155,7 +237,7 @@ export async function parseEpubMetadata(
 	const relationships: string[] = [];
 	const characters: string[] = [];
 	const additionalTags: string[] = [...subjectTags];
-	let summary: string | null = opfDescription;
+	let summary: string | null = opfDescription ? extractStructuredPlainText(domParser.parseFromString(opfDescription, 'text/html').body) : null;
 	let notes: string | null = null;
 	let parsedWordCount: number | null = null;
 	let publicationStatus: 'Completed' | 'Work in Progress' | 'Unknown' | null = null;
@@ -164,7 +246,6 @@ export async function parseEpubMetadata(
 	const chapters: FicChapter[] = [];
 	let accumulatedStoryText = '';
 
-	// 3. Process spine files (or all HTML files if spine is empty)
 	const fileHrefsToProcess: string[] = [];
 	if (spineItemRefs.length > 0) {
 		for (const idref of spineItemRefs) {
@@ -174,7 +255,6 @@ export async function parseEpubMetadata(
 			}
 		}
 	} else {
-		// Fallback: sort keys
 		for (const filename of Object.keys(zipContent.files).sort()) {
 			if (filename.endsWith('.html') || filename.endsWith('.xhtml') || filename.endsWith('.htm')) {
 				fileHrefsToProcess.push(filename);
@@ -183,7 +263,6 @@ export async function parseEpubMetadata(
 	}
 
 	for (const rawHref of fileHrefsToProcess) {
-		// Resolve relative path against OPF directory
 		const resolvedPath = rawHref.startsWith('/') ? rawHref.slice(1) : opfDir + rawHref;
 		const zipEntry = zipContent.file(resolvedPath) || zipContent.file(rawHref);
 		if (!zipEntry) continue;
@@ -260,25 +339,24 @@ export async function parseEpubMetadata(
 			});
 		}
 
-		// Look for summary block
+		// Look for summary block for library card metadata
 		if (!summary || summary.length < 20) {
-			const summaryEl = htmlDoc.querySelector('.summary, #summary, [data-summary], div.preface > .summary');
+			const summaryEl = htmlDoc.querySelector('.summary, #summary, [data-summary], div.summary > blockquote');
 			if (summaryEl) {
-				const extracted = extractStructuredText(summaryEl);
+				const extracted = extractStructuredPlainText(summaryEl);
 				if (extracted) summary = extracted;
 			}
 		}
 
 		// Look for notes block
 		if (!notes) {
-			const notesEl = htmlDoc.querySelector('.notes, #notes, div.preface > .notes');
+			const notesEl = htmlDoc.querySelector('.notes, #notes, div.notes > blockquote');
 			if (notesEl) {
-				const extracted = extractStructuredText(notesEl);
+				const extracted = extractStructuredPlainText(notesEl);
 				if (extracted) notes = extracted;
 			}
 		}
 
-		// Is this purely a title page, cover, or preface metadata wrapper without story chapters?
 		const lowerHref = rawHref.toLowerCase();
 		const isCoverOrTitlepage =
 			lowerHref.includes('cover') ||
@@ -286,57 +364,51 @@ export async function parseEpubMetadata(
 			lowerHref.includes('title_page') ||
 			lowerHref.includes('toc');
 
-		// Check if there is actual chapter story text
-		const storyContainer = htmlDoc.querySelector('div.userstuff, div.chapter, body');
-		if (storyContainer && !isCoverOrTitlepage) {
-			// Clone storyContainer to clean out preface metadata if repeated
-			const cloned = storyContainer.cloneNode(true) as HTMLElement;
-			cloned.querySelectorAll('div.preface, div.meta, dl.tags, dl.meta, div.stats').forEach((el) => el.remove());
+		// Check if this file is a dedicated Preface or Foreword section
+		const isPreface = lowerHref.includes('preface') || htmlDoc.querySelector('div.preface') !== null;
 
-			const chapterText = extractStructuredText(cloned);
-			if (chapterText.length > 50) {
-				// Determine chapter title
-				let chapterTitle = `Chapter ${chapters.length + 1}`;
-				const heading = htmlDoc.querySelector('h2, h1, h3, .chapter-title, .title');
-				if (heading) {
-					const headingText = heading.textContent?.trim();
-					if (
-						headingText &&
-						headingText.length < 100 &&
-						!headingText.toLowerCase().includes('archive of our own') &&
-						!headingText.toLowerCase().includes('preface')
-					) {
-						chapterTitle = headingText;
-					}
+		if (isPreface && !isCoverOrTitlepage) {
+			// Extract Preface as its own readable section if it contains notes/prologue
+			const prefaceNotesEl = htmlDoc.querySelector('div.preface .notes, div.preface .userstuff, div.preface');
+			if (prefaceNotesEl) {
+				const cloneNotes = prefaceNotesEl.cloneNode(true) as HTMLElement;
+				cloneNotes.querySelectorAll('dl.tags, dl.meta, div.stats, div.summary').forEach((e) => e.remove());
+				const { text, html } = cleanChapterHtml(domParser.parseFromString(cloneNotes.outerHTML, 'text/html'));
+				if (text.length > 40) {
+					chapters.push({
+						title: 'Preface & Notes',
+						content: html || text,
+					});
+					accumulatedStoryText += text + '\n\n';
 				}
-
+			}
+		} else if (!isCoverOrTitlepage) {
+			// Extract standard chapter
+			const chapterResult = cleanChapterHtml(htmlDoc);
+			if (chapterResult.text.length > 40) {
+				const chapterTitle = chapterResult.title || `Chapter ${chapters.length + 1}`;
 				chapters.push({
 					title: chapterTitle,
-					content: chapterText,
+					content: chapterResult.html || chapterResult.text,
 				});
-				accumulatedStoryText += chapterText + '\n\n';
+				accumulatedStoryText += chapterResult.text + '\n\n';
 			}
 		}
 	}
 
-	// If no spine chapters were found, fall back to whatever text we have
 	if (chapters.length === 0) {
 		if (accumulatedStoryText.trim().length > 0) {
 			chapters.push({ title: 'Full Work', content: accumulatedStoryText.trim() });
 		} else {
-			chapters.push({ title: 'Chapter 1', content: 'No readable text was found in this file.' });
+			chapters.push({ title: 'Chapter 1', content: '<p>No se encontró texto legible en este archivo.</p>' });
 		}
 	}
 
-	// Calculate word count from story chapters if not provided by AO3 stats
 	const finalWordCount =
 		parsedWordCount !== null
 			? parsedWordCount
 			: accumulatedStoryText.trim().length > 0
-			? accumulatedStoryText
-					.trim()
-					.split(/\s+/)
-					.filter(Boolean).length
+			? accumulatedStoryText.trim().split(/\s+/).filter(Boolean).length
 			: null;
 
 	const fandomString = fandoms.length > 0 ? fandoms.join(', ') : 'General Fandom';

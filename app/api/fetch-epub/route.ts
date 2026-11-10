@@ -3,9 +3,6 @@ import { NextRequest, NextResponse } from 'next/server';
 /**
  * Proxy route for downloading publicly accessible EPUB or PDF files
  * to bypass browser CORS restrictions when pasting direct links.
- *
- * NOTE: Google Drive private and shared drive files are imported directly
- * in the client via Google Identity Services (OAuth) and Google Picker API.
  */
 export async function GET(request: NextRequest) {
 	const searchParams = request.nextUrl.searchParams;
