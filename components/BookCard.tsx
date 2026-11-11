@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import type { Fic } from '../lib/db';
 import { db, deleteBookAndFile } from '../lib/db';
 import { FicSummary } from './FicSummary';
@@ -22,9 +23,19 @@ interface BookCardProps {
 	onOpenDetails?: (fic: Fic) => void;
 	onTagClick?: (type: 'fandom' | 'character' | 'relationship' | 'tag' | 'warning', value: string) => void;
 	onUpdated?: () => void;
+	isSelected?: boolean;
+	onToggleSelect?: (ficId: number) => void;
 }
 
-export function BookCard({ fic, onSelect, onOpenDetails, onTagClick, onUpdated }: BookCardProps) {
+export function BookCard({
+	fic,
+	onSelect,
+	onOpenDetails,
+	onTagClick,
+	onUpdated,
+	isSelected,
+	onToggleSelect,
+}: BookCardProps) {
 	const [isEditing, setIsEditing] = useState(false);
 	const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
 
@@ -202,11 +213,34 @@ export function BookCard({ fic, onSelect, onOpenDetails, onTagClick, onUpdated }
 				if (onOpenDetails) onOpenDetails(fic);
 				else onSelect(fic);
 			}}
-			className='group bg-white border border-gray-300 hover:border-[#990000] rounded-md p-5 shadow-xs hover:shadow-md transition-all cursor-pointer relative font-sans space-y-3.5'
+			className={`group bg-white border ${
+				isSelected
+					? 'border-[#990000] ring-1 ring-[#990000]/25 bg-red-50/15'
+					: 'border-gray-300 hover:border-[#990000]'
+			} rounded-md p-5 shadow-xs hover:shadow-md transition-all cursor-pointer relative font-sans space-y-3.5`}
 		>
-			{/* Top Bar: Badges + Quick Actions */}
+			{/* Top Bar: Checkbox + Badges + Quick Actions */}
 			<div className='flex justify-between items-start gap-3'>
 				<div className='flex flex-wrap items-center gap-2'>
+					{/* Multiple Selection Checkbox */}
+					{onToggleSelect && (
+						<div
+							onClick={(e) => e.stopPropagation()}
+							className='flex items-center mr-1'
+						>
+							<input
+								type='checkbox'
+								checked={Boolean(isSelected)}
+								onChange={(e) => {
+									e.stopPropagation();
+									if (fic.id) onToggleSelect(fic.id);
+								}}
+								aria-label={`Seleccionar ${fic.title}`}
+								className='w-4 h-4 rounded border-gray-300 text-[#990000] focus:ring-[#990000] cursor-pointer accent-[#990000]'
+							/>
+						</div>
+					)}
+
 					{/* Rating Badge */}
 					<span
 						className={`px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide border rounded ${getRatingBadgeClass(
@@ -314,8 +348,14 @@ export function BookCard({ fic, onSelect, onOpenDetails, onTagClick, onUpdated }
 
 			{/* Title and Author Header */}
 			<div>
-				<h3 className='text-lg font-bold font-serif text-[#990000] group-hover:underline leading-snug'>
-					{fic.title}
+				<h3 className='text-lg font-bold font-serif leading-snug'>
+					<Link
+						href={`/fic/${fic.id}`}
+						onClick={(e) => e.stopPropagation()}
+						className='text-[#990000] hover:underline decoration-[#990000] cursor-pointer'
+					>
+						{fic.title}
+					</Link>
 				</h3>
 				<p className='text-xs text-gray-700 mt-1'>
 					por{' '}
@@ -504,14 +544,14 @@ export function BookCard({ fic, onSelect, onOpenDetails, onTagClick, onUpdated }
 						<span>Detalles</span>
 					</button>
 
-					<button
-						type='button'
-						onClick={() => onSelect(fic)}
-						className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded shadow-xs cursor-pointer transition-colors flex items-center space-x-1.5'
+					<Link
+						href={`/fic/${fic.id}`}
+						onClick={(e) => e.stopPropagation()}
+						className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded shadow-xs cursor-pointer transition-colors flex items-center space-x-1.5 no-underline'
 					>
 						<BookOpen className='w-3.5 h-3.5' />
 						<span>{fic.format === 'pdf' ? 'Abrir PDF' : 'Leer obra'} →</span>
-					</button>
+					</Link>
 				</div>
 			</div>
 		</div>

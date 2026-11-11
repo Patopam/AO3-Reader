@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { db, type Fic, reprocessAllFicsFromBlobs } from '../lib/db';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { db, type Fic, reprocessAllFicsFromBlobs, deleteMultipleBooksAndFiles } from '../lib/db';
+import { loadSavedLibraryState, saveLibraryState, clearLibraryState } from '../lib/libraryState';
 import { BookCard } from './BookCard';
 import { FicDetailsModal } from './FicDetailsModal';
+import { SyncHeader } from './SyncHeader';
 import {
 	Search,
 	Upload,
@@ -20,10 +22,13 @@ import {
 	Bookmark,
 	Layers,
 	SortAsc,
+	Trash2,
+	CheckSquare,
+	Square,
 } from 'lucide-react';
 
 interface LibraryViewProps {
-	onSelectFic: (fic: Fic) => void;
+	onSelectFic?: (fic: Fic) => void;
 	onOpenUpload: () => void;
 }
 
@@ -40,12 +45,15 @@ type SortOption =
 	| 'chaptersAsc'
 	| 'updatedDesc';
 
-export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
+export function LibraryView({ onSelectFic = () => {}, onOpenUpload }: LibraryViewProps) {
+	// Restore saved library state so navigating back preserves search, filters, and page
+	const savedState = useMemo(() => loadSavedLibraryState(), []);
+
 	const [fics, setFics] = useState<Fic[]>([]);
 	const [loading, setLoading] = useState<boolean>(true);
-	const [searchQuery, setSearchQuery] = useState('');
-	const [quickTab, setQuickTab] = useState<QuickTab>('all');
-	const [sortBy, setSortBy] = useState<SortOption>('dateAddedDesc');
+	const [searchQuery, setSearchQuery] = useState(savedState.searchQuery || '');
+	const [quickTab, setQuickTab] = useState<QuickTab>(savedState.quickTab || 'all');
+	const [sortBy, setSortBy] = useState<SortOption>((savedState.sortBy as SortOption) || 'dateAddedDesc');
 
 	// Fic details modal state
 	const [detailsFic, setDetailsFic] = useState<Fic | null>(null);
@@ -54,33 +62,40 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 	// Responsive mobile filter drawer toggle
 	const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false);
 
+	// Multi-select and batch deletion state
+	const [selectedFicIds, setSelectedFicIds] = useState<Set<number>>(new Set());
+	const [isDeletingSelected, setIsDeletingSelected] = useState<boolean>(false);
+
 	// Pagination
-	const [currentPage, setCurrentPage] = useState(1);
-	const [pageSize, setPageSize] = useState(20);
+	const [currentPage, setCurrentPage] = useState(savedState.currentPage || 1);
+	const [pageSize, setPageSize] = useState(savedState.pageSize || 20);
 
 	// Specific Filters
-	const [selectedFormat, setSelectedFormat] = useState<'all' | 'epub' | 'pdf'>('all');
-	const [selectedStatus, setSelectedStatus] = useState<string>('all');
-	const [selectedRatings, setSelectedRatings] = useState<string[]>([]);
-	const [selectedWarnings, setSelectedWarnings] = useState<string[]>([]);
-	const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
-	const [selectedFandoms, setSelectedFandoms] = useState<string[]>([]);
-	const [selectedRelationships, setSelectedRelationships] = useState<string[]>([]);
-	const [selectedCharacters, setSelectedCharacters] = useState<string[]>([]);
-	const [selectedTags, setSelectedTags] = useState<string[]>([]);
-	const [selectedLanguage, setSelectedLanguage] = useState<string>('all');
+	const [selectedFormat, setSelectedFormat] = useState<'all' | 'epub' | 'pdf'>(savedState.selectedFormat || 'all');
+	const [selectedStatus, setSelectedStatus] = useState<string>(savedState.selectedStatus || 'all');
+	const [selectedRatings, setSelectedRatings] = useState<string[]>(savedState.selectedRatings || []);
+	const [selectedWarnings, setSelectedWarnings] = useState<string[]>(savedState.selectedWarnings || []);
+	const [selectedCategories, setSelectedCategories] = useState<string[]>(savedState.selectedCategories || []);
+	const [selectedFandoms, setSelectedFandoms] = useState<string[]>(savedState.selectedFandoms || []);
+	const [selectedRelationships, setSelectedRelationships] = useState<string[]>(savedState.selectedRelationships || []);
+	const [selectedCharacters, setSelectedCharacters] = useState<string[]>(savedState.selectedCharacters || []);
+	const [selectedTags, setSelectedTags] = useState<string[]>(savedState.selectedTags || []);
+	const [selectedLanguage, setSelectedLanguage] = useState<string>(savedState.selectedLanguage || 'all');
 
 	// Range filters
-	const [minWords, setMinWords] = useState<string>('');
-	const [maxWords, setMaxWords] = useState<string>('');
-	const [minChapters, setMinChapters] = useState<string>('');
-	const [maxChapters, setMaxChapters] = useState<string>('');
+	const [minWords, setMinWords] = useState<string>(savedState.minWords || '');
+	const [maxWords, setMaxWords] = useState<string>(savedState.maxWords || '');
+	const [minChapters, setMinChapters] = useState<string>(savedState.minChapters || '');
+	const [maxChapters, setMaxChapters] = useState<string>(savedState.maxChapters || '');
 
 	// In-filter search inputs
 	const [fandomSearch, setFandomSearch] = useState('');
 	const [relSearch, setRelSearch] = useState('');
 	const [charSearch, setCharSearch] = useState('');
 	const [tagSearch, setTagSearch] = useState('');
+
+	const isInitialMount = useRef(true);
+	const feedContainerRef = useRef<HTMLElement | null>(null);
 
 	const loadFics = async () => {
 		try {
@@ -98,8 +113,12 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 		loadFics();
 	}, []);
 
-	// Reset page when any filter changes
+	// Reset page when any filter changes, but NOT on initial mount (restoring saved page)
 	useEffect(() => {
+		if (isInitialMount.current) {
+			isInitialMount.current = false;
+			return;
+		}
 		setCurrentPage(1);
 	}, [
 		searchQuery,
@@ -121,7 +140,72 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 		maxChapters,
 	]);
 
+	// Persist state to sessionStorage
+	useEffect(() => {
+		saveLibraryState({
+			searchQuery,
+			quickTab,
+			sortBy,
+			selectedFormat,
+			selectedStatus,
+			selectedRatings,
+			selectedWarnings,
+			selectedCategories,
+			selectedFandoms,
+			selectedRelationships,
+			selectedCharacters,
+			selectedTags,
+			selectedLanguage,
+			minWords,
+			maxWords,
+			minChapters,
+			maxChapters,
+			currentPage,
+			pageSize,
+		});
+	}, [
+		searchQuery,
+		quickTab,
+		sortBy,
+		selectedFormat,
+		selectedStatus,
+		selectedRatings,
+		selectedWarnings,
+		selectedCategories,
+		selectedFandoms,
+		selectedRelationships,
+		selectedCharacters,
+		selectedTags,
+		selectedLanguage,
+		minWords,
+		maxWords,
+		minChapters,
+		maxChapters,
+		currentPage,
+		pageSize,
+	]);
+
+	// Restore scroll position after loading works
+	useEffect(() => {
+		if (!loading && feedContainerRef.current && savedState.scrollY > 0) {
+			const scrollPos = savedState.scrollY;
+			const timer = setTimeout(() => {
+				if (feedContainerRef.current) {
+					feedContainerRef.current.scrollTop = scrollPos;
+				}
+			}, 50);
+			return () => clearTimeout(timer);
+		}
+	}, [loading, savedState.scrollY]);
+
+	const handleFeedScroll = () => {
+		if (feedContainerRef.current) {
+			saveLibraryState({ scrollY: feedContainerRef.current.scrollTop });
+		}
+	};
+
 	const clearAllFilters = () => {
+		clearLibraryState();
 		setSearchQuery('');
 		setQuickTab('all');
 		setSelectedFormat('all');
@@ -142,6 +226,62 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 		setRelSearch('');
 		setCharSearch('');
 		setTagSearch('');
+	};
+
+	const handleToggleSelect = (id: number) => {
+		setSelectedFicIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	};
+
+	const handleSelectAllCurrentPage = () => {
+		const pageIds = paginatedFics.map((f) => f.id).filter((id): id is number => typeof id === 'number');
+		setSelectedFicIds((prev) => {
+			const allSelected = pageIds.length > 0 && pageIds.every((id) => prev.has(id));
+			const next = new Set(prev);
+			if (allSelected) {
+				pageIds.forEach((id) => next.delete(id));
+			} else {
+				pageIds.forEach((id) => next.add(id));
+			}
+			return next;
+		});
+	};
+
+	const handleSelectAllFiltered = () => {
+		const allIds = sortedFics.map((f) => f.id).filter((id): id is number => typeof id === 'number');
+		setSelectedFicIds(new Set(allIds));
+	};
+
+	const handleClearSelection = () => {
+		setSelectedFicIds(new Set());
+	};
+
+	const handleDeleteSelected = async () => {
+		if (selectedFicIds.size === 0) return;
+		const count = selectedFicIds.size;
+		const confirmMsg =
+			count === 1
+				? '¿Estás seguro de eliminar la obra seleccionada y su archivo de tu biblioteca?'
+				: `¿Estás seguro de eliminar las ${count} obras seleccionadas y sus archivos de tu biblioteca? Esta acción no se puede deshacer.`;
+
+		if (!window.confirm(confirmMsg)) return;
+
+		try {
+			setIsDeletingSelected(true);
+			const idsArray = Array.from(selectedFicIds);
+			await deleteMultipleBooksAndFiles(idsArray);
+			setSelectedFicIds(new Set());
+			await loadFics();
+		} catch (err) {
+			console.error('Error deleting selected fics:', err);
+			alert('Ocurrió un error al eliminar las obras seleccionadas.');
+		} finally {
+			setIsDeletingSelected(false);
+		}
 	};
 
 	const activeFiltersCount =
@@ -770,9 +910,11 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 						<span>Filters ({activeFiltersCount})</span>
 					</button>
 
+					<SyncHeader />
+
 					<button
 						onClick={onOpenUpload}
-						className='px-4 py-2 bg-[#990000] hover:bg-[#800000] text-white rounded-md font-bold text-xs shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer'
+						className='px-4 py-2 bg-[#990000] hover:bg-[#800000] text-white rounded-md font-bold text-xs shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer shrink-0'
 					>
 						<Upload className='w-3.5 h-3.5' />
 						<span>Import Works</span>
@@ -858,7 +1000,11 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 			{/* Main Layout Area: Works Grid + Desktop Filter Sidebar */}
 			<div className='flex-1 flex overflow-hidden'>
 				{/* Works Feed */}
-				<main className='flex-1 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full'>
+				<main
+					ref={feedContainerRef as any}
+					onScroll={handleFeedScroll}
+					className='flex-1 overflow-y-auto p-4 md:p-8 space-y-6 max-w-4xl mx-auto w-full'
+				>
 					{loading ? (
 						<div className='flex justify-center items-center h-64 text-gray-500 font-medium'>
 							Loading your library...
@@ -890,6 +1036,73 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 						</div>
 					) : (
 						<>
+							{/* Multi-Selection Control Bar */}
+							<div className='flex flex-wrap items-center justify-between gap-2.5 p-3 bg-white border border-gray-200 rounded-md text-xs shadow-xs'>
+								<div className='flex items-center space-x-2'>
+									<button
+										type='button'
+										onClick={handleSelectAllCurrentPage}
+										className='flex items-center space-x-1.5 px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50 text-gray-700 font-semibold cursor-pointer transition-colors shadow-xs'
+									>
+										{paginatedFics.length > 0 &&
+										paginatedFics.every((f) => f.id && selectedFicIds.has(f.id)) ? (
+											<CheckSquare className='w-4 h-4 text-[#990000]' />
+										) : (
+											<Square className='w-4 h-4 text-gray-400' />
+										)}
+										<span>
+											{paginatedFics.length > 0 &&
+											paginatedFics.every((f) => f.id && selectedFicIds.has(f.id))
+												? 'Deseleccionar página'
+												: `Seleccionar página (${paginatedFics.length})`}
+										</span>
+									</button>
+
+									{selectedFicIds.size > 0 && selectedFicIds.size < sortedFics.length && (
+										<button
+											type='button'
+											onClick={handleSelectAllFiltered}
+											className='text-xs text-[#990000] hover:underline font-semibold cursor-pointer ml-1'
+										>
+											Seleccionar todas ({sortedFics.length})
+										</button>
+									)}
+
+									{selectedFicIds.size > 0 && (
+										<button
+											type='button'
+											onClick={handleClearSelection}
+											className='text-xs text-gray-500 hover:text-gray-800 underline cursor-pointer ml-1'
+										>
+											Limpiar selección
+										</button>
+									)}
+								</div>
+
+								{/* Delete Selected Button */}
+								<div className='flex items-center space-x-2'>
+									{selectedFicIds.size > 0 ? (
+										<button
+											type='button'
+											onClick={handleDeleteSelected}
+											disabled={isDeletingSelected}
+											className='px-3.5 py-1.5 bg-red-50 hover:bg-red-100 border border-red-300 text-[#990000] font-bold rounded text-xs shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50'
+										>
+											<Trash2 className='w-3.5 h-3.5 text-[#990000]' />
+											<span>
+												{isDeletingSelected
+													? 'Eliminando...'
+													: `Eliminar seleccionados (${selectedFicIds.size})`}
+											</span>
+										</button>
+									) : (
+										<span className='text-[11px] text-gray-400 hidden sm:inline'>
+											Marca las casillas para seleccionar múltiples obras
+										</span>
+									)}
+								</div>
+							</div>
+
 							{/* Books Cards List */}
 							<div className='space-y-4'>
 								{paginatedFics.map((fic) => (
@@ -900,6 +1113,8 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 										onOpenDetails={(f) => setDetailsFic(f)}
 										onTagClick={handleTagClick}
 										onUpdated={loadFics}
+										isSelected={fic.id ? selectedFicIds.has(fic.id) : false}
+										onToggleSelect={handleToggleSelect}
 									/>
 								))}
 							</div>
@@ -973,6 +1188,32 @@ export function LibraryView({ onSelectFic, onOpenUpload }: LibraryViewProps) {
 						</div>
 						<FilterSection />
 					</div>
+				</div>
+			)}
+
+			{/* Sticky Floating Batch Actions Bar */}
+			{selectedFicIds.size > 0 && (
+				<div className='fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white border border-[#990000] shadow-2xl rounded-full px-5 py-2.5 flex items-center space-x-4 animate-in fade-in slide-in-from-bottom-4 duration-150'>
+					<span className='text-xs font-bold text-gray-900'>
+						<span className='text-[#990000] font-black mr-1'>{selectedFicIds.size}</span>
+						{selectedFicIds.size === 1 ? 'obra seleccionada' : 'obras seleccionadas'}
+					</span>
+					<button
+						type='button'
+						onClick={handleClearSelection}
+						className='text-xs text-gray-500 hover:text-gray-800 underline cursor-pointer'
+					>
+						Cancelar
+					</button>
+					<button
+						type='button'
+						onClick={handleDeleteSelected}
+						disabled={isDeletingSelected}
+						className='px-3.5 py-1.5 bg-[#990000] hover:bg-[#800000] text-white font-bold rounded-full text-xs shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer disabled:opacity-50'
+					>
+						<Trash2 className='w-3.5 h-3.5' />
+						<span>{isDeletingSelected ? 'Eliminando...' : 'Eliminar seleccionados'}</span>
+					</button>
 				</div>
 			)}
 

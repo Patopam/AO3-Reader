@@ -107,8 +107,8 @@ export function cleanAndFormatSummary(raw: string | null | undefined): string | 
 		el.remove()
 	);
 
-	// Remove redundant summary or notes headings if present
-	body.querySelectorAll('h1, h2, h3, h4, h5, h6, .heading, .title').forEach((h) => {
+	// Remove redundant summary, notes, or chapter headings if present
+	body.querySelectorAll('h1, h2, h3, h4, h5, h6, .heading, .title, p.heading').forEach((h) => {
 		const headingText = (h.textContent || '').trim().toLowerCase();
 		if (
 			headingText === 'summary' ||
@@ -116,7 +116,13 @@ export function cleanAndFormatSummary(raw: string | null | undefined): string | 
 			headingText === 'resumen' ||
 			headingText === 'resumen:' ||
 			headingText === 'notes' ||
-			headingText === 'notas'
+			headingText === 'notas' ||
+			headingText === 'preface' ||
+			headingText === 'prefacio' ||
+			headingText.startsWith('chapter ') ||
+			headingText.startsWith('capítulo ') ||
+			headingText.startsWith('capitulo ') ||
+			headingText === 'table of contents'
 		) {
 			h.remove();
 		}
@@ -467,10 +473,11 @@ export async function parseEpubMetadata(
 			});
 		}
 
-		// Fallback for summary: if not found in OPF, inspect AO3 preface summary block
+		// Strict fallback for summary: ONLY if not found in OPF dc:description,
+		// inspect AO3 dedicated preface summary blockquote. Never ingest chapter content.
 		if (!summary) {
 			const summaryEl = htmlDoc.querySelector(
-				'div.summary blockquote.userstuff, div.summary blockquote, .summary .userstuff, div.summary, #summary'
+				'div.preface div.summary blockquote.userstuff, div.preface div.summary blockquote, div.summary blockquote.userstuff, div.summary blockquote'
 			);
 			if (summaryEl) {
 				const extracted = cleanAndFormatSummary(summaryEl.innerHTML || summaryEl.textContent);

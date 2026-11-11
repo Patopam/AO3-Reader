@@ -16,6 +16,18 @@ export interface FicChapter {
 	content: string;
 }
 
+export interface ReadingProgressRecord {
+	id?: number;
+	ficId: number;
+	cloudFicId?: string;
+	progress: number; // 0 - 100 percentage
+	chapterIdx: number;
+	pdfPage?: number;
+	scrollPosition?: number;
+	scrollRatio?: number;
+	updatedAt: number;
+}
+
 export interface Fic {
 	id?: number;
 	title: string;
@@ -46,11 +58,17 @@ export interface Fic {
 	readingProgress: number; // 0 - 100 percentage
 	currentChapterIdx?: number; // for EPUB
 	currentPdfPage?: number; // for PDF
+	currentScrollPosition?: number; // scroll offset in pixels
+	currentScrollRatio?: number; // scroll ratio (0.0 - 1.0)
 	fileId?: number; // foreign key to files table
 	notes?: string | null;
 	chapters?: FicChapter[]; // cached for instant reading
 	fullTextContent?: string;
 	status?: 'unread' | 'reading' | 'completed' | 'favorite';
+	// Cloud sync tracking:
+	cloudId?: string;
+	syncedAt?: number | null;
+	storagePath?: string | null;
 	// Legacy property during migration:
 	fileData?: Blob | File;
 }
@@ -58,6 +76,7 @@ export interface Fic {
 export class FicDatabase extends Dexie {
 	fics!: Table<Fic, number>;
 	files!: Table<FicFile, number>;
+	reading_progress!: Table<ReadingProgressRecord, number>;
 
 	constructor() {
 		super('FicReaderDatabase');
@@ -122,6 +141,13 @@ export class FicDatabase extends Dexie {
 					});
 				}
 			});
+
+		// Version 3 (adds dedicated reading_progress table for scroll position and chapter synchronization)
+		this.version(3).stores({
+			fics: '++id, title, author, rating, fandom, *fandoms, *tags, *additionalTags, status, isFavorite, isRead, format, wordCount, chapterCount, importedAt, lastReadAt',
+			files: '++id, ficId, format, importedAt',
+			reading_progress: '++id, ficId, chapterIdx, updatedAt',
+		});
 	}
 }
 
@@ -178,27 +204,127 @@ export async function getBookBlob(fileId: number): Promise<Blob | null> {
  * Deletes a fic and cleans up its associated binary file.
  */
 export async function deleteBookAndFile(ficId: number): Promise<void> {
-	await db.transaction('rw', db.fics, db.files, async () => {
+	await db.transaction('rw', db.fics, db.files, db.reading_progress, async () => {
 		const fic = await db.fics.get(ficId);
 		if (fic?.fileId) {
 			await db.files.delete(fic.fileId);
 		}
+		await db.reading_progress.where('ficId').equals(ficId).delete();
 		await db.fics.delete(ficId);
 	});
 }
 
 /**
- * Updates reading progress and sets lastReadAt timestamp.
+ * Deletes multiple fics and their associated binary files and reading progress
+ * in a single atomic Dexie transaction.
+ */
+export async function deleteMultipleBooksAndFiles(ficIds: number[]): Promise<void> {
+	if (!ficIds || ficIds.length === 0) return;
+	await db.transaction('rw', db.fics, db.files, db.reading_progress, async () => {
+		const ficsToDelete = await db.fics.where('id').anyOf(ficIds).toArray();
+		const fileIds = ficsToDelete
+			.map((f) => f.fileId)
+			.filter((id): id is number => typeof id === 'number');
+
+		if (fileIds.length > 0) {
+			await db.files.where('id').anyOf(fileIds).delete();
+		}
+		await db.reading_progress.where('ficId').anyOf(ficIds).delete();
+		await db.fics.where('id').anyOf(ficIds).delete();
+	});
+}
+
+/**
+ * Debounced background sync of reading progress to Supabase.
+ */
+let progressSyncTimer: any = null;
+
+export async function syncReadingProgressToSupabase(
+	ficId: number,
+	progress: number,
+	currentChapterIdx?: number,
+	currentPdfPage?: number,
+	scrollPosition?: number,
+	scrollRatio?: number
+): Promise<void> {
+	if (typeof window === 'undefined') return;
+
+	if (progressSyncTimer) {
+		clearTimeout(progressSyncTimer);
+	}
+
+	progressSyncTimer = setTimeout(async () => {
+		try {
+			const { supabase, isSupabaseConfigured, getCurrentUser } = await import('./supabase');
+			if (!isSupabaseConfigured || !supabase) return;
+
+			const user = await getCurrentUser();
+			if (!user) return;
+
+			const fic = await db.fics.get(ficId);
+			if (!fic) return;
+
+			const now = Date.now();
+			const finalProgress = Math.min(100, Math.max(0, Math.round(progress)));
+			const chapIdx = currentChapterIdx ?? fic.currentChapterIdx ?? 0;
+			const pdfPage = currentPdfPage ?? fic.currentPdfPage ?? 1;
+			const scrollPos = scrollPosition !== undefined ? Math.round(scrollPosition) : (fic.currentScrollPosition || 0);
+			const scrollRat = scrollRatio !== undefined ? Math.round(scrollRatio * 10000) / 10000 : (fic.currentScrollRatio || 0);
+
+			// 1. Upsert reading_progress record in Supabase
+			await supabase.from('reading_progress').upsert(
+				{
+					user_id: user.id,
+					fic_id: fic.cloudId || null,
+					local_id: ficId,
+					progress: finalProgress,
+					chapter_idx: chapIdx,
+					pdf_page: pdfPage,
+					scroll_position: scrollPos,
+					scroll_ratio: scrollRat,
+					updated_at: now,
+				},
+				{ onConflict: 'user_id,local_id' }
+			);
+
+			// 2. Also update reading progress on the fics table
+			await supabase
+				.from('fics')
+				.update({
+					reading_progress: finalProgress,
+					current_chapter_idx: chapIdx,
+					current_pdf_page: pdfPage,
+					current_scroll_position: scrollPos,
+					current_scroll_ratio: scrollRat,
+					last_read_at: now,
+					updated_at: now,
+				})
+				.eq('user_id', user.id)
+				.eq('local_id', ficId);
+		} catch (err) {
+			console.warn('Background reading progress sync to Supabase skipped or failed:', err);
+		}
+	}, 600);
+}
+
+/**
+ * Updates reading progress, chapter index, and scroll position in both
+ * Dexie (IndexedDB tables fics and reading_progress) and Supabase cloud.
  */
 export async function updateReadingProgress(
 	ficId: number,
 	progress: number,
 	currentChapterIdx?: number,
-	currentPdfPage?: number
+	currentPdfPage?: number,
+	scrollPosition?: number,
+	scrollRatio?: number
 ): Promise<void> {
+	const now = Date.now();
+	const cleanProgress = Math.min(100, Math.max(0, Math.round(progress)));
+
 	const updates: Partial<Fic> = {
-		readingProgress: Math.min(100, Math.max(0, Math.round(progress))),
-		lastReadAt: Date.now(),
+		readingProgress: cleanProgress,
+		lastReadAt: now,
 	};
 	if (currentChapterIdx !== undefined) {
 		updates.currentChapterIdx = currentChapterIdx;
@@ -206,7 +332,65 @@ export async function updateReadingProgress(
 	if (currentPdfPage !== undefined) {
 		updates.currentPdfPage = currentPdfPage;
 	}
+	if (scrollPosition !== undefined) {
+		updates.currentScrollPosition = Math.round(scrollPosition);
+	}
+	if (scrollRatio !== undefined) {
+		updates.currentScrollRatio = Math.round(scrollRatio * 10000) / 10000;
+	}
+
+	// 1. Update Dexie fics table
 	await db.fics.update(ficId, updates);
+
+	// 2. Update or insert in Dexie reading_progress table
+	try {
+		const existing = await db.reading_progress.where('ficId').equals(ficId).first();
+		if (existing?.id) {
+			await db.reading_progress.update(existing.id, {
+				progress: cleanProgress,
+				chapterIdx: currentChapterIdx ?? existing.chapterIdx ?? 0,
+				pdfPage: currentPdfPage ?? existing.pdfPage ?? 1,
+				scrollPosition: scrollPosition !== undefined ? Math.round(scrollPosition) : existing.scrollPosition,
+				scrollRatio: scrollRatio !== undefined ? Math.round(scrollRatio * 10000) / 10000 : existing.scrollRatio,
+				updatedAt: now,
+			});
+		} else {
+			await db.reading_progress.add({
+				ficId,
+				progress: cleanProgress,
+				chapterIdx: currentChapterIdx ?? 0,
+				pdfPage: currentPdfPage ?? 1,
+				scrollPosition: scrollPosition !== undefined ? Math.round(scrollPosition) : 0,
+				scrollRatio: scrollRatio !== undefined ? Math.round(scrollRatio * 10000) / 10000 : 0,
+				updatedAt: now,
+			});
+		}
+	} catch (e) {
+		console.warn('Could not update Dexie reading_progress table:', e);
+	}
+
+	// 3. Synchronize to Supabase in background
+	syncReadingProgressToSupabase(
+		ficId,
+		cleanProgress,
+		currentChapterIdx,
+		currentPdfPage,
+		scrollPosition,
+		scrollRatio
+	).catch(() => {});
+}
+
+/**
+ * Retrieves the latest saved reading progress for a fic from Dexie.
+ */
+export async function getReadingProgress(ficId: number): Promise<ReadingProgressRecord | null> {
+	if (!ficId) return null;
+	try {
+		const record = await db.reading_progress.where('ficId').equals(ficId).first();
+		return record || null;
+	} catch {
+		return null;
+	}
 }
 
 /**

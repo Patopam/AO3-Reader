@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import type { Fic, FicChapter } from '../lib/db';
-import { db, updateReadingProgress } from '../lib/db';
+import { db, updateReadingProgress, getReadingProgress } from '../lib/db';
 import { escapeRegex } from '../lib/epubParser';
 import { PdfReader } from './PdfReader';
 import { FicDetailsModal } from './FicDetailsModal';
@@ -107,6 +107,88 @@ export function ReaderView({ fic: initialFic, onBack, onFicUpdated }: ReaderView
 		loadChapters();
 	}, [fic]);
 
+	// Restore saved scroll position for current chapter or entire work
+	const restoredScrollRef = useRef(false);
+	const scrollDebounceRef = useRef<any>(null);
+
+	// Fetch saved reading_progress record from Dexie on mount
+	useEffect(() => {
+		async function restorePosition() {
+			if (!fic.id) return;
+			try {
+				const saved = await getReadingProgress(fic.id);
+				if (saved && saved.scrollPosition && saved.scrollPosition > 0 && !restoredScrollRef.current) {
+					restoredScrollRef.current = true;
+					setTimeout(() => {
+						if (scrollContainerRef.current) {
+							scrollContainerRef.current.scrollTop = saved.scrollPosition!;
+						}
+					}, 80);
+				} else if (fic.currentScrollPosition && fic.currentScrollPosition > 0 && !restoredScrollRef.current) {
+					restoredScrollRef.current = true;
+					setTimeout(() => {
+						if (scrollContainerRef.current) {
+							scrollContainerRef.current.scrollTop = fic.currentScrollPosition!;
+						}
+					}, 80);
+				}
+			} catch (err) {
+				console.warn('Could not restore reading position:', err);
+			}
+		}
+
+		if (!loading) {
+			restorePosition();
+		}
+	}, [loading, fic.id, fic.currentScrollPosition]);
+
+	// Auto-save reading position and scroll offset on user scroll
+	const handleContentScroll = (e: React.UIEvent<HTMLDivElement>) => {
+		if (!fic.id || chapters.length === 0) return;
+
+		const target = e.currentTarget;
+		const { scrollTop, scrollHeight, clientHeight } = target;
+
+		if (scrollDebounceRef.current) {
+			clearTimeout(scrollDebounceRef.current);
+		}
+
+		scrollDebounceRef.current = setTimeout(() => {
+			const maxScroll = Math.max(1, scrollHeight - clientHeight);
+			const scrollRatio = Math.min(1, Math.max(0, scrollTop / maxScroll));
+
+			let totalProgress = 0;
+			if (viewMode === 'chapters') {
+				const baseChapterProgress = (currentChapterIdx / chapters.length) * 100;
+				const chapterShare = (1 / chapters.length) * scrollRatio * 100;
+				totalProgress = Math.min(100, Math.round(baseChapterProgress + chapterShare));
+			} else {
+				totalProgress = Math.min(100, Math.round(scrollRatio * 100));
+			}
+
+			// Automatically save to Dexie reading_progress table and sync to Supabase
+			updateReadingProgress(
+				fic.id!,
+				totalProgress,
+				currentChapterIdx,
+				undefined,
+				scrollTop,
+				scrollRatio
+			);
+
+			if (onFicUpdated) {
+				onFicUpdated({
+					...fic,
+					readingProgress: totalProgress,
+					currentChapterIdx,
+					currentScrollPosition: Math.round(scrollTop),
+					currentScrollRatio: scrollRatio,
+					lastReadAt: Date.now(),
+				});
+			}
+		}, 300);
+	};
+
 	// Auto-save reading position on chapter change
 	const handleChapterChange = (newIdx: number) => {
 		if (newIdx < 0 || newIdx >= chapters.length) return;
@@ -117,7 +199,17 @@ export function ReaderView({ fic: initialFic, onBack, onFicUpdated }: ReaderView
 
 		if (fic.id && chapters.length > 0) {
 			const progressPercent = Math.round(((newIdx + 1) / chapters.length) * 100);
-			updateReadingProgress(fic.id, progressPercent, newIdx, undefined);
+			updateReadingProgress(fic.id, progressPercent, newIdx, undefined, 0, 0);
+			if (onFicUpdated) {
+				onFicUpdated({
+					...fic,
+					readingProgress: progressPercent,
+					currentChapterIdx: newIdx,
+					currentScrollPosition: 0,
+					currentScrollRatio: 0,
+					lastReadAt: Date.now(),
+				});
+			}
 		}
 	};
 
@@ -474,7 +566,11 @@ export function ReaderView({ fic: initialFic, onBack, onFicUpdated }: ReaderView
 			)}
 
 			{/* Reader Content Body (Pure book content without injected summary clutter) */}
-			<div ref={scrollContainerRef} className='flex-1 overflow-y-auto p-4 md:p-12'>
+			<div
+				ref={scrollContainerRef}
+				onScroll={handleContentScroll}
+				className='flex-1 overflow-y-auto p-4 md:p-12'
+			>
 				{loading ? (
 					<div className='flex justify-center items-center h-64 text-gray-500 font-medium'>
 						Cargando texto de la obra...
